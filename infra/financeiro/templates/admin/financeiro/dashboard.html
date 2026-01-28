@@ -1,0 +1,113 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Dashboard Financeiro{% endblock %}
+
+{% block content %}
+<h1>Dashboard Financeiro</h1>
+
+<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px;">
+    <div style="background: #f0f8ff; padding: 20px; border-radius: 8px; border-left: 4px solid #4CAF50;">
+        <h3 style="margin: 0; color: #666;">Receita Total</h3>
+        <p style="font-size: 24px; margin: 10px 0; color: #4CAF50;">R$ {{ stats.receita_total|floatformat:2 }}</p>
+    </div>
+    
+    <div style="background: #fff3e0; padding: 20px; border-radius: 8px; border-left: 4px solid #FF9800;">
+        <h3 style="margin: 0; color: #666;">Custo Total</h3>
+        <p style="font-size: 24px; margin: 10px 0; color: #FF9800;">R$ {{ stats.custo_total|floatformat:2 }}</p>
+    </div>
+    
+    <div style="background: #e8f5e9; padding: 20px; border-radius: 8px; border-left: 4px solid #2196F3;">
+        <h3 style="margin: 0; color: #666;">Margem Total</h3>
+        <p style="font-size: 24px; margin: 10px 0; color: #2196F3;">R$ {{ stats.margem_total|floatformat:2 }}</p>
+    </div>
+    
+    <div style="background: #f3e5f5; padding: 20px; border-radius: 8px; border-left: 4px solid #9C27B0;">
+        <h3 style="margin: 0; color: #666;">Margem %</h3>
+        <p style="font-size: 24px; margin: 10px 0; color: #9C27B0;">{{ stats.margem_percentual|floatformat:1 }}%</p>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h2>Receita e Custo por Mês</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f5f5f5;">
+                    <th style="padding: 10px; text-align: left;">Período</th>
+                    <th style="padding: 10px; text-align: right;">Receita</th>
+                    <th style="padding: 10px; text-align: right;">Custo</th>
+                    <th style="padding: 10px; text-align: right;">Margem %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for periodo in periodos_resumo %}
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 10px;">{{ periodo.mes|stringformat:"02d" }}/{{ periodo.ano }}</td>
+                    <td style="padding: 10px; text-align: right;">R$ {{ periodo.receita|floatformat:2 }}</td>
+                    <td style="padding: 10px; text-align: right;">R$ {{ periodo.custo|floatformat:2 }}</td>
+                    <td style="padding: 10px; text-align: right;">{{ periodo.margem_pct|floatformat:1 }}%</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" style="padding: 10px; text-align: center; color: #999;">Nenhum período fechado</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h2>Top 10 Contratos Mais Lucrativos</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f5f5f5;">
+                    <th style="padding: 10px; text-align: left;">Contrato</th>
+                    <th style="padding: 10px; text-align: right;">Margem Média</th>
+                    <th style="padding: 10px; text-align: right;">Margem %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for contrato in top_contratos %}
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 10px;">{{ contrato.nome }}</td>
+                    <td style="padding: 10px; text-align: right;">R$ {{ contrato.margem_media|floatformat:2 }}</td>
+                    <td style="padding: 10px; text-align: right;">{{ contrato.margem_pct|floatformat:1 }}%</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="3" style="padding: 10px; text-align: center; color: #999;">Nenhum snapshot criado</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <h2>Custos por Categoria</h2>
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr style="background: #f5f5f5;">
+                <th style="padding: 10px; text-align: left;">Categoria</th>
+                <th style="padding: 10px; text-align: right;">Custo Total</th>
+                <th style="padding: 10px; text-align: right;">% do Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for categoria in custos_por_categoria %}
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 10px;">{{ categoria.nome }}</td>
+                <td style="padding: 10px; text-align: right;">R$ {{ categoria.valor|floatformat:2 }}</td>
+                <td style="padding: 10px; text-align: right;">{{ categoria.percentual|floatformat:1 }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div style="margin-top: 20px;">
+    <a href="{% url 'admin:index' %}" style="padding: 10px 20px; background: #417690; color: white; text-decoration: none; border-radius: 4px;">← Voltar ao Admin</a>
+</div>
+
+{% endblock %}
