@@ -16,6 +16,11 @@ app.conf.beat_schedule = {
         'schedule': crontab(day_of_month='1', hour='0', minute='5'),
         'options': {'expires': 3600}
     },
+    'gerar-invoices-mes-atual': {
+        'task': 'invoices.tasks.task_gerar_invoices_mes_atual',
+        'schedule': crontab(day_of_month='1', hour='0', minute='10'),
+        'options': {'expires': 3600}
+    },
     'fechar-periodo-mes-anterior': {
         'task': 'infra.financeiro.tasks.task_fechar_periodo_mes_anterior',
         'schedule': crontab(day_of_month='1', hour='2', minute='0'),
@@ -24,6 +29,11 @@ app.conf.beat_schedule = {
     'alertar-vencimentos-diario': {
         'task': 'infra.financeiro.tasks.task_alertar_vencimentos',
         'schedule': crontab(hour='8', minute='0'),
+        'options': {'expires': 3600}
+    },
+    'marcar-invoices-atrasados': {
+        'task': 'invoices.tasks.task_marcar_invoices_atrasados',
+        'schedule': crontab(hour='9', minute='0'),
         'options': {'expires': 3600}
     },
 }

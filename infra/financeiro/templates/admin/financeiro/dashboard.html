@@ -1,113 +1,500 @@
 {% extends "admin/base_site.html" %}
 {% load static %}
 
-{% block title %}Dashboard Financeiro{% endblock %}
+{% block title %}Dashboard Financeiro e Operacional{% endblock %}
+
+{% block extrastyle %}
+<style>
+    .dashboard-container {
+        padding: 20px;
+        background: #f5f5f5;
+    }
+    
+    .dashboard-header {
+        margin-bottom: 30px;
+    }
+    
+    .dashboard-header h1 {
+        margin: 0 0 5px 0;
+        color: #333;
+        font-size: 28px;
+    }
+    
+    .dashboard-header p {
+        margin: 0;
+        color: #666;
+        font-size: 14px;
+    }
+    
+    /* Cards Principais */
+    .cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    
+    .card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid #ddd;
+        transition: transform 0.2s;
+    }
+    
+    .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    
+    .card-title {
+        margin: 0 0 10px 0;
+        color: #666;
+        font-size: 12px;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+    
+    .card-value {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 0;
+    }
+    
+    .card-subtitle {
+        font-size: 11px;
+        color: #999;
+        margin-top: 5px;
+    }
+    
+    .card-green { border-left-color: #28a745; }
+    .card-green .card-value { color: #28a745; }
+    
+    .card-red { border-left-color: #dc3545; }
+    .card-red .card-value { color: #dc3545; }
+    
+    .card-blue { border-left-color: #2196F3; }
+    .card-blue .card-value { color: #2196F3; }
+    
+    .card-purple { border-left-color: #9C27B0; }
+    .card-purple .card-value { color: #9C27B0; }
+    
+    .card-orange { border-left-color: #FF9800; }
+    .card-orange .card-value { color: #FF9800; }
+    
+    .card-teal { border-left-color: #1abc9c; }
+    .card-teal .card-value { color: #1abc9c; }
+    
+    /* Seções */
+    .section {
+        background: white;
+        padding: 25px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 30px;
+    }
+    
+    .section-title {
+        margin: 0 0 20px 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
+        border-bottom: 2px solid #f0f0f0;
+        padding-bottom: 10px;
+    }
+    
+    /* Tabelas */
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .table thead th {
+        background: #f8f9fa;
+        padding: 12px;
+        text-align: left;
+        font-size: 12px;
+        font-weight: 600;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 2px solid #e9ecef;
+    }
+    
+    .table tbody td {
+        padding: 12px;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 14px;
+    }
+    
+    .table tbody tr:hover {
+        background: #f8f9fa;
+    }
+    
+    .text-right {
+        text-align: right;
+    }
+    
+    .text-center {
+        text-align: center;
+    }
+    
+    /* Badges */
+    .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+    }
+    
+    .badge-success { background: #28a745; }
+    .badge-warning { background: #ffc107; color: #333; }
+    .badge-danger { background: #dc3545; }
+    .badge-info { background: #17a2b8; }
+    
+    /* Urgência */
+    .urgencia {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+    }
+    
+    /* Grid 2 colunas */
+    .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 30px;
+        margin-bottom: 30px;
+    }
+    
+    @media (max-width: 768px) {
+        .grid-2 {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    /* Vazio */
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: #999;
+    }
+    
+    .empty-state i {
+        font-size: 48px;
+        margin-bottom: 15px;
+        opacity: 0.5;
+    }
+    
+    /* Botões */
+    .btn-voltar {
+        display: inline-block;
+        padding: 10px 20px;
+        background: #417690;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        font-size: 14px;
+        transition: background 0.2s;
+    }
+    
+    .btn-voltar:hover {
+        background: #356276;
+        color: white;
+    }
+    
+    /* Tendência */
+    .tendencia {
+        font-size: 18px;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<h1>Dashboard Financeiro</h1>
-
-<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px;">
-    <div style="background: #f0f8ff; padding: 20px; border-radius: 8px; border-left: 4px solid #4CAF50;">
-        <h3 style="margin: 0; color: #666;">Receita Total</h3>
-        <p style="font-size: 24px; margin: 10px 0; color: #4CAF50;">R$ {{ stats.receita_total|floatformat:2 }}</p>
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <h1>📊 Dashboard Financeiro e Operacional</h1>
+        <p>
+            {% if cards.ultimo_periodo %}
+                Última atualização: {{ cards.ultimo_periodo.nome }} (fechado)
+                • Previsão: {{ cards.ultimo_periodo.mes|add:1|stringformat:"02d" }}/{{ cards.ultimo_periodo.ano }} (em aberto)
+            {% else %}
+                Nenhum período fechado ainda
+            {% endif %}
+        </p>
     </div>
     
-    <div style="background: #fff3e0; padding: 20px; border-radius: 8px; border-left: 4px solid #FF9800;">
-        <h3 style="margin: 0; color: #666;">Custo Total</h3>
-        <p style="font-size: 24px; margin: 10px 0; color: #FF9800;">R$ {{ stats.custo_total|floatformat:2 }}</p>
+    <!-- CARDS PRINCIPAIS -->
+    <div class="cards-grid">
+        <!-- Receita Total (Último Período) -->
+        <div class="card card-green">
+            <h3 class="card-title">Receita Total</h3>
+            <p class="card-value">R$ {{ cards.receita_total|floatformat:2 }}</p>
+            <p class="card-subtitle">Último período fechado</p>
+        </div>
+        
+        <!-- Despesa Total (Último Período) -->
+        <div class="card card-red">
+            <h3 class="card-title">Despesa Total</h3>
+            <p class="card-value">R$ {{ cards.despesa_total|floatformat:2 }}</p>
+            <p class="card-subtitle">Último período fechado</p>
+        </div>
+        
+        <!-- Lucro Total (Último Período) -->
+        <div class="card card-blue">
+            <h3 class="card-title">Lucro Total</h3>
+            <p class="card-value">R$ {{ cards.lucro_total|floatformat:2 }}</p>
+            <p class="card-subtitle">Último período fechado</p>
+        </div>
+        
+        <!-- Margem % (Último Período) -->
+        <div class="card card-purple">
+            <h3 class="card-title">Margem %</h3>
+            <p class="card-value">{{ cards.margem_pct|floatformat:1 }}%</p>
+            <p class="card-subtitle">Último período fechado</p>
+        </div>
+        
+        <!-- Receita Prevista (Mês Atual) -->
+        <div class="card card-teal">
+            <h3 class="card-title">Receita Prevista</h3>
+            <p class="card-value">R$ {{ cards.previsao_receita|floatformat:2 }}</p>
+            <p class="card-subtitle">Previsão mês atual</p>
+        </div>
+        
+        <!-- Lucro Previsto (Mês Atual) -->
+        <div class="card card-orange">
+            <h3 class="card-title">Lucro Previsto</h3>
+            <p class="card-value">R$ {{ cards.previsao_lucro|floatformat:2 }}</p>
+            <p class="card-subtitle">Previsão mês atual</p>
+        </div>
     </div>
     
-    <div style="background: #e8f5e9; padding: 20px; border-radius: 8px; border-left: 4px solid #2196F3;">
-        <h3 style="margin: 0; color: #666;">Margem Total</h3>
-        <p style="font-size: 24px; margin: 10px 0; color: #2196F3;">R$ {{ stats.margem_total|floatformat:2 }}</p>
-    </div>
-    
-    <div style="background: #f3e5f5; padding: 20px; border-radius: 8px; border-left: 4px solid #9C27B0;">
-        <h3 style="margin: 0; color: #666;">Margem %</h3>
-        <p style="font-size: 24px; margin: 10px 0; color: #9C27B0;">{{ stats.margem_percentual|floatformat:1 }}%</p>
-    </div>
-</div>
-
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
-    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <h2>Receita e Custo por Mês</h2>
-        <table style="width: 100%; border-collapse: collapse;">
+    <!-- VENCIMENTOS PRÓXIMOS -->
+    <div class="section">
+        <h2 class="section-title">⚠️ Vencimentos Próximos (30 dias)</h2>
+        
+        {% if vencimentos %}
+        <table class="table">
             <thead>
-                <tr style="background: #f5f5f5;">
-                    <th style="padding: 10px; text-align: left;">Período</th>
-                    <th style="padding: 10px; text-align: right;">Receita</th>
-                    <th style="padding: 10px; text-align: right;">Custo</th>
-                    <th style="padding: 10px; text-align: right;">Margem %</th>
+                <tr>
+                    <th>Urgência</th>
+                    <th>Tipo</th>
+                    <th>Nome</th>
+                    <th>Fornecedor</th>
+                    <th class="text-right">Valor</th>
+                    <th class="text-center">Vencimento</th>
+                    <th class="text-center">Dias Restantes</th>
                 </tr>
             </thead>
             <tbody>
-                {% for periodo in periodos_resumo %}
-                <tr style="border-bottom: 1px solid #eee;">
-                    <td style="padding: 10px;">{{ periodo.mes|stringformat:"02d" }}/{{ periodo.ano }}</td>
-                    <td style="padding: 10px; text-align: right;">R$ {{ periodo.receita|floatformat:2 }}</td>
-                    <td style="padding: 10px; text-align: right;">R$ {{ periodo.custo|floatformat:2 }}</td>
-                    <td style="padding: 10px; text-align: right;">{{ periodo.margem_pct|floatformat:1 }}%</td>
-                </tr>
-                {% empty %}
+                {% for item in vencimentos %}
                 <tr>
-                    <td colspan="4" style="padding: 10px; text-align: center; color: #999;">Nenhum período fechado</td>
+                    <td>
+                        <span class="urgencia" style="background-color: {{ item.urgencia.cor }};">
+                            {{ item.urgencia.texto }}
+                        </span>
+                    </td>
+                    <td><strong>{{ item.tipo }}</strong></td>
+                    <td>{{ item.nome }}</td>
+                    <td>{{ item.fornecedor }}</td>
+                    <td class="text-right">R$ {{ item.valor|floatformat:2 }}</td>
+                    <td class="text-center">{{ item.vencimento|date:"d/m/Y" }}</td>
+                    <td class="text-center">
+                        <strong style="color: {{ item.urgencia.cor }};">
+                            {{ item.dias_restantes }} dias
+                        </strong>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% else %}
+        <div class="empty-state">
+            <p>✅ Nenhum vencimento nos próximos 30 dias</p>
+        </div>
+        {% endif %}
     </div>
     
-    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <h2>Top 10 Contratos Mais Lucrativos</h2>
-        <table style="width: 100%; border-collapse: collapse;">
+    <!-- GRID 2 COLUNAS -->
+    <div class="grid-2">
+        <!-- CUSTOS POR CLIENTE -->
+        <div class="section">
+            <h2 class="section-title">👥 Top 10 Clientes por Margem</h2>
+            
+            {% if custos_clientes %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Cliente</th>
+                        <th class="text-right">Receita</th>
+                        <th class="text-right">Custo</th>
+                        <th class="text-right">Margem</th>
+                        <th class="text-center">Margem %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cliente in custos_clientes %}
+                    <tr>
+                        <td>
+                            <strong>{{ cliente.nome }}</strong>
+                            <br>
+                            <small style="color: #999;">{{ cliente.num_contratos }} contrato(s)</small>
+                        </td>
+                        <td class="text-right">R$ {{ cliente.receita|floatformat:2 }}</td>
+                        <td class="text-right">R$ {{ cliente.custo|floatformat:2 }}</td>
+                        <td class="text-right">R$ {{ cliente.margem|floatformat:2 }}</td>
+                        <td class="text-center">
+                            <strong style="color: {{ cliente.cor_margem }};">
+                                {{ cliente.margem_pct|floatformat:1 }}%
+                            </strong>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>Nenhum dado disponível</p>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- CUSTOS POR CATEGORIA -->
+        <div class="section">
+            <h2 class="section-title">📦 Custos por Categoria</h2>
+            
+            {% if custos_categorias %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Categoria</th>
+                        <th class="text-right">Valor</th>
+                        <th class="text-right">% do Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cat in custos_categorias %}
+                    <tr>
+                        <td>
+                            <span style="display: inline-block; width: 12px; height: 12px; background: {{ cat.cor }}; border-radius: 2px; margin-right: 8px;"></span>
+                            <strong>{{ cat.nome }}</strong>
+                        </td>
+                        <td class="text-right">R$ {{ cat.valor|floatformat:2 }}</td>
+                        <td class="text-right">{{ cat.percentual|floatformat:1 }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>Nenhum custo registrado</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- ANÁLISE POR CONTRATO (ÚLTIMOS 3 MESES) -->
+    <div class="section">
+        <h2 class="section-title">📈 Análise por Contrato (Últimos 3 Meses)</h2>
+        
+        {% if analise_contratos %}
+        <table class="table">
             <thead>
-                <tr style="background: #f5f5f5;">
-                    <th style="padding: 10px; text-align: left;">Contrato</th>
-                    <th style="padding: 10px; text-align: right;">Margem Média</th>
-                    <th style="padding: 10px; text-align: right;">Margem %</th>
+                <tr>
+                    <th>Contrato</th>
+                    <th>Cliente</th>
+                    <th class="text-center">Tendência</th>
+                    {% for item in analise_contratos.0.meses %}
+                    <th class="text-right">{{ item.mes }}</th>
+                    {% endfor %}
+                    <th class="text-right">Margem Média</th>
                 </tr>
             </thead>
             <tbody>
-                {% for contrato in top_contratos %}
-                <tr style="border-bottom: 1px solid #eee;">
-                    <td style="padding: 10px;">{{ contrato.nome }}</td>
-                    <td style="padding: 10px; text-align: right;">R$ {{ contrato.margem_media|floatformat:2 }}</td>
-                    <td style="padding: 10px; text-align: right;">{{ contrato.margem_pct|floatformat:1 }}%</td>
-                </tr>
-                {% empty %}
+                {% for contrato in analise_contratos %}
                 <tr>
-                    <td colspan="3" style="padding: 10px; text-align: center; color: #999;">Nenhum snapshot criado</td>
+                    <td><strong>{{ contrato.contrato.nome }}</strong></td>
+                    <td>{{ contrato.cliente }}</td>
+                    <td class="text-center">
+                        <span class="tendencia" style="color: {{ contrato.tendencia_cor }};">
+                            {{ contrato.tendencia }}
+                        </span>
+                    </td>
+                    {% for mes in contrato.meses %}
+                    <td class="text-right">
+                        <div style="font-size: 12px;">
+                            <div style="color: #28a745;">↑ R$ {{ mes.receita|floatformat:2 }}</div>
+                            <div style="color: #dc3545;">↓ R$ {{ mes.custo|floatformat:2 }}</div>
+                            <div style="color: #2196F3;"><strong>R$ {{ mes.lucro|floatformat:2 }}</strong></div>
+                        </div>
+                    </td>
+                    {% endfor %}
+                    <td class="text-right">
+                        <strong>R$ {{ contrato.margem_media|floatformat:2 }}</strong>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% else %}
+        <div class="empty-state">
+            <p>É necessário ter pelo menos 1 período fechado</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- EVOLUÇÃO MENSAL (ÚLTIMOS 12 MESES) -->
+    <div class="section">
+        <h2 class="section-title">📊 Evolução Mensal (Últimos 12 Meses)</h2>
+        
+        {% if evolucao_mensal %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Mês</th>
+                    <th class="text-right">Receita</th>
+                    <th class="text-right">Custo</th>
+                    <th class="text-right">Margem</th>
+                    <th class="text-right">Margem %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for mes in evolucao_mensal %}
+                <tr>
+                    <td><strong>{{ mes.mes }}</strong></td>
+                    <td class="text-right" style="color: #28a745;">R$ {{ mes.receita|floatformat:2 }}</td>
+                    <td class="text-right" style="color: #dc3545;">R$ {{ mes.custo|floatformat:2 }}</td>
+                    <td class="text-right" style="color: #2196F3;"><strong>R$ {{ mes.margem|floatformat:2 }}</strong></td>
+                    <td class="text-right">{{ mes.margem_pct|floatformat:1 }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <p>Nenhum período fechado disponível</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- LINKS RÁPIDOS -->
+    <div style="margin-top: 30px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="margin: 0 0 15px 0; font-size: 16px;">🔗 Links Rápidos</h3>
+        <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+            <a href="{% url 'admin:index' %}" class="btn-voltar">← Voltar ao Admin</a>
+            <a href="{% url 'admin:contratos_contrato_changelist' %}" class="btn-voltar">Contratos</a>
+            <a href="{% url 'admin:invoices_invoice_changelist' %}" class="btn-voltar">Invoices</a>
+            <a href="{% url 'admin:financeiro_periodofinanceiro_changelist' %}" class="btn-voltar">Períodos Financeiros</a>
+            <a href="{% url 'admin:financeiro_contratosnapshot_changelist' %}" class="btn-voltar">Snapshots</a>
+        </div>
     </div>
 </div>
-
-<div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-    <h2>Custos por Categoria</h2>
-    <table style="width: 100%; border-collapse: collapse;">
-        <thead>
-            <tr style="background: #f5f5f5;">
-                <th style="padding: 10px; text-align: left;">Categoria</th>
-                <th style="padding: 10px; text-align: right;">Custo Total</th>
-                <th style="padding: 10px; text-align: right;">% do Total</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for categoria in custos_por_categoria %}
-            <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 10px;">{{ categoria.nome }}</td>
-                <td style="padding: 10px; text-align: right;">R$ {{ categoria.valor|floatformat:2 }}</td>
-                <td style="padding: 10px; text-align: right;">{{ categoria.percentual|floatformat:1 }}%</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-<div style="margin-top: 20px;">
-    <a href="{% url 'admin:index' %}" style="padding: 10px 20px; background: #417690; color: white; text-decoration: none; border-radius: 4px;">← Voltar ao Admin</a>
-</div>
-
 {% endblock %}

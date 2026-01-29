@@ -153,3 +153,26 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_RESULT_EXPIRES = 3600  # 1 hora (ajuste conforme necessidade)
+
+JAZZMIN_SETTINGS = {
+    # 📌 Branding
+    "site_title": "Control Admin",
+    "site_header": "Painel Administrativo",
+    "site_brand": "Control",
+    "site_icon": "fas fa-laptop-code",
+    "welcome_sign": "Bem-vindo ao Painel!",
+    "copyright": "© 2026 Minha Empresa",
+
+
+
+
+
+    # 🧰 UI Customizer
+    "show_ui_builder": True,
+    "use_google_fonts_cdn": True,
+
+    # 🔁 Change form format
+    "changeform_format": "horizontal_tabs",
+    "changeform_format_overrides": {},
+    "language_chooser": True,
+}

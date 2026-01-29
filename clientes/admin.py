@@ -6,10 +6,8 @@ from contratos.models import Contrato
 class ContratoInline(admin.TabularInline):
     model = Contrato
     extra = 0
-    fields = ('nome', 'valor_mensal', 'data_inicio', 'data_fim')
+    fields = ('nome', 'valor_mensal', 'data_inicio')
     show_change_link = True
-    readonly_fields = ('nome', 'valor_mensal', 'data_inicio', 'data_fim')
-    can_delete = False
 
 
 @admin.register(Cliente)

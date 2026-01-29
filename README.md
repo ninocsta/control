@@ -68,6 +68,14 @@ Acesse:
 - Execução diária às 08:00
 - Logs detalhados
 
+### ✅ Invoices/Cobranças Automáticas ⭐ **NOVO**
+- Geração automática de invoices mensais (dia 1 do mês)
+- Soma automática de contratos ativos por cliente
+- Vencimento padrão: dia 5 do mês
+- Status: pendente → pago → atrasado
+- Marcação automática de invoices atrasados (diário)
+- Management command: `python manage.py gerar_invoices`
+
 ---
 
 ## 🏗️ Arquitetura
@@ -136,6 +144,11 @@ control/
 
 | Arquivo | Descrição |
 |---------|-----------|
+| [TASKS_IMPLEMENTADAS.md](TASKS_IMPLEMENTADAS.md) | ⭐ Sistema de automação completo |
+| [INDICE_DOCUMENTACAO.md](INDICE_DOCUMENTACAO.md) | 📚 Índice de toda documentação |
+| [TASKS_QUICK_REF.md](TASKS_QUICK_REF.md) | ⚡ Referência rápida de tasks |
+| [AUTOMACAO_COMPLETA.md](AUTOMACAO_COMPLETA.md) | 🤖 Detalhes de automação |
+| [INVOICES_TASKS.md](INVOICES_TASKS.md) | 💰 Tasks de invoices |
 | [QUICK_START.md](QUICK_START.md) | ⚡ Começar em 5 minutos |
 | [RESUMO_TECNICO_1PG.md](RESUMO_TECNICO_1PG.md) | 📄 Resumo de 1 página |
 | [RESUMO_EXECUTIVO.md](RESUMO_EXECUTIVO.md) | 📊 Visão completa |

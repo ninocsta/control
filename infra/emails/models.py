@@ -27,7 +27,7 @@ class DomainEmail(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Email {self.dominio.nome_dominio}"
+        return f"Email {self.dominio.nome}"
     
 class DomainEmailCost(core_models.InfraCostModel):
     """
