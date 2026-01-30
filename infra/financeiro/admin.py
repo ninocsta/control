@@ -4,7 +4,7 @@ from django.urls import path, reverse
 from django.shortcuts import redirect
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from .models import PeriodoFinanceiro, ContratoSnapshot
+from .models import PeriodoFinanceiro, ContratoSnapshot, DespesaAdicional
 from .services import fechar_periodo
 
 
@@ -14,13 +14,47 @@ admin.site.site_title = 'Controle Financeiro'
 admin.site.index_title = 'Painel de Administração'
 
 
+@admin.register(DespesaAdicional)
+class DespesaAdicionalAdmin(admin.ModelAdmin):
+    list_display = (
+        'descricao', 'contrato', 'valor', 'mes_ano_referencia',
+        'criado_em', 'criado_por'
+    )
+    list_filter = ('ano_referencia', 'mes_referencia', 'contrato__cliente')
+    search_fields = ('descricao', 'contrato__nome', 'contrato__cliente__nome', 'observacoes')
+    readonly_fields = ('criado_em',)
+    
+    fieldsets = (
+        ('Informações Básicas', {
+            'fields': ('contrato', 'descricao', 'valor')
+        }),
+        ('Período de Referência', {
+            'fields': ('mes_referencia', 'ano_referencia')
+        }),
+        ('Detalhes', {
+            'fields': ('observacoes', 'criado_por', 'criado_em'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def mes_ano_referencia(self, obj):
+        return f"{obj.mes_referencia:02d}/{obj.ano_referencia}"
+    mes_ano_referencia.short_description = 'Período'
+    mes_ano_referencia.admin_order_field = 'ano_referencia'
+    
+    def save_model(self, request, obj, form, change):
+        if not change:  # Apenas na criação
+            obj.criado_por = request.user.username or request.user.email
+        super().save_model(request, obj, form, change)
+
+
 class ContratoSnapshotInline(admin.TabularInline):
     model = ContratoSnapshot
     extra = 0
     can_delete = False
     readonly_fields = (
         'contrato', 'receita', 'custo_dominios', 'custo_hostings',
-        'custo_vps', 'custo_backups', 'custo_emails', 'custo_total',
+        'custo_vps', 'custo_backups', 'custo_emails', 'custo_despesas_adicionais', 'custo_total',
         'margem', 'margem_percentual', 'criado_em'
     )
     fields = readonly_fields
@@ -172,11 +206,19 @@ class PeriodoFinanceiroAdmin(admin.ModelAdmin):
 class ContratoSnapshotAdmin(admin.ModelAdmin):
     list_display = (
         'contrato', 'periodo', 'receita', 'custo_total',
-        'margem', 'margem_percentual', 'criado_em'
+        'margem', 'margem_percentual_display', 'criado_em'
     )
-    list_filter = ('periodo__ano', 'periodo__mes', 'contrato__cliente')
+    list_filter = ('periodo__ano', 'periodo__mes', 'contrato__cliente__tipo', 'contrato__cliente')
     search_fields = ('contrato__nome', 'contrato__cliente__nome')
     readonly_fields = [f.name for f in ContratoSnapshot._meta.fields]
+    
+    def margem_percentual_display(self, obj):
+        """Exibe margem percentual ou 'Interno' para contratos internos."""
+        if obj.margem_percentual is None:
+            return "Interno"
+        return f"{obj.margem_percentual:.2f}%"
+    margem_percentual_display.short_description = 'Margem %'
+    margem_percentual_display.admin_order_field = 'margem_percentual'
     
     fieldsets = (
         ('Referência', {

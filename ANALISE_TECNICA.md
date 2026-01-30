@@ -51,8 +51,8 @@ Todos herdam de `InfraModel` (nome, fornecedor, contratos M2M) e seus custos de 
   - Usa `VPSContrato` (M2M customizado com datas)
 - **VPSBackup**: Backup vinculado a VPS
   - Custo segue os contratos da VPS
-- **DomainEmail**: Email vinculado a domínio
-  - Custo segue os contratos do domínio
+- **DomainEmail**: Email vinculado a contrato específico (custo sem rateio)
+  - Custo atribuído diretamente ao contrato (sem rateio)
 
 ### 4. **Invoice** (`invoices.models.Invoice`)
 - Cobrança mensal do cliente
@@ -199,14 +199,14 @@ class ContratoSnapshot(models.Model):
    │   ├─ HostingCost
    │   ├─ VPSCost
    │   ├─ VPSBackupCost (via VPS)
-   │   └─ DomainEmailCost (via Domínio)
+   │   └─ DomainEmailCost (direto do Contrato)
    │
    ├─ Calcula rateio por contrato
    │   └─ Para cada custo:
    │       ├─ Identifica contratos vinculados
    │       ├─ Calcula custo_mensal
-   │       ├─ Divide igualmente (custo / N contratos)
-   │       └─ Acumula por tipo (dominios, vps, etc)
+   │       ├─ Divide igualmente (custo / N contratos) OU atribui direto (emails)
+   │       └─ Acumula por tipo (dominios, vps, emails, etc)
    │
    ├─ Cria 1 ContratoSnapshot por contrato
    │   ├─ receita = contrato.valor_mensal

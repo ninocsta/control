@@ -17,7 +17,8 @@ class Contrato(models.Model):
     valor_mensal = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        validators=[MinValueValidator(Decimal('0.01'))]
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text="Valor mensal do contrato. Pode ser 0 para contratos internos."
     )
     data_inicio = models.DateField()
     data_fim = models.DateField(null=True, blank=True, help_text="Data em que o contrato foi extinto")
@@ -32,5 +33,12 @@ class Contrato(models.Model):
         return f"{self.nome} - {self.cliente.nome}"
     
     def clean(self):
+        # Validar data de fim
         if self.data_fim and self.data_fim < self.data_inicio:
             raise ValidationError('Data de fim não pode ser anterior à data de início')
+        
+        # Para clientes NÃO internos, valor_mensal deve ser > 0
+        if self.cliente and self.cliente.tipo != 'interno' and self.valor_mensal <= 0:
+            raise ValidationError(
+                'Contratos de clientes não-internos devem ter valor mensal maior que zero.'
+            )

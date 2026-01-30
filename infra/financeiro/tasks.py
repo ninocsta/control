@@ -152,13 +152,15 @@ def task_alertar_vencimentos(self):
         emails_vencendo = DomainEmailCost.objects.filter(
             vencimento=data_alerta,
             ativo=True
-        ).select_related('email__dominio')
+        ).select_related('email__dominio', 'email__contrato__cliente')
         
         for cost in emails_vencendo:
             dias = (cost.vencimento - hoje).days
             alertas.append({
                 'tipo': 'email',
                 'dominio': cost.email.dominio.nome,
+                'cliente': cost.email.contrato.cliente.nome,
+                'contrato': cost.email.contrato.nome,
                 'fornecedor': cost.email.fornecedor,
                 'vencimento': cost.vencimento.isoformat(),
                 'dias_restantes': dias,

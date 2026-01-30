@@ -22,8 +22,11 @@ def dashboard_financeiro(request):
         # Análise por contrato (últimos 3 meses)
         'analise_contratos': service.get_analise_contratos(limit=10),
         
-        # Vencimentos próximos (30 dias)
-        'vencimentos': service.get_vencimentos_proximos(dias=30),
+        # Vencimentos (incluindo vencidos e próximos 30 dias)
+        'vencimentos': service.get_vencimentos_incluindo_vencidos(dias_futuro=30, dias_passado=30),
+        
+        # Status de Invoices
+        'invoices_status': service.get_status_invoices(),
         
         # Custos por categoria
         'custos_categorias': service.get_custos_por_categoria(),

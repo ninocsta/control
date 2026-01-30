@@ -14,8 +14,9 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from collections import defaultdict
 
-from infra.financeiro.models import PeriodoFinanceiro, ContratoSnapshot
+from infra.financeiro.models import PeriodoFinanceiro, ContratoSnapshot, DespesaAdicional
 from contratos.models import Contrato
+from invoices.models import Invoice
 from infra.dominios.models import DomainCost
 from infra.hosting.models import HostingCost
 from infra.vps.models import VPSCost
@@ -179,18 +180,53 @@ def _calcular_rateios(contratos, custos_por_tipo, primeiro_dia, ultimo_dia) -> d
         'custo_vps': Decimal('0.00'),
         'custo_backups': Decimal('0.00'),
         'custo_emails': Decimal('0.00'),
+        'custo_despesas_adicionais': Decimal('0.00'),
         'detalhamento': {
             'dominios': [],
             'hostings': [],
             'vps': [],
             'backups': [],
-            'emails': []
+            'emails': [],
+            'despesas_adicionais': [],
+            'invoices': []
         }
     })
     
-    # Inicializar receita de cada contrato
+    # Calcular receita REAL de cada contrato (soma de invoices pagos no período)
+    # Buscar invoices do período (referência ao mês/ano do primeiro_dia)
+    mes_ref = primeiro_dia.month
+    ano_ref = primeiro_dia.year
+    
     for contrato in contratos_list:
-        rateios[contrato.id]['receita'] = contrato.valor_mensal
+        # Buscar TODOS os invoices do cliente para este período
+        # Pode haver múltiplos: invoice automático + invoice de cobrança adicional
+        invoices = Invoice.objects.filter(
+            cliente=contrato.cliente,
+            mes_referencia=mes_ref,
+            ano_referencia=ano_ref
+        )
+        
+        if invoices.exists():
+            # Somar TODOS os invoices do período
+            receita_total = sum(inv.valor_total for inv in invoices)
+            rateios[contrato.id]['receita'] = receita_total
+            
+            # Adicionar detalhamento de cada invoice
+            for inv in invoices:
+                rateios[contrato.id]['detalhamento']['invoices'].append({
+                    'id': inv.id,
+                    'status': inv.status,
+                    'valor': float(inv.valor_total),
+                    'vencimento': str(inv.vencimento),
+                    'order_nsu': inv.order_nsu or ''
+                })
+        else:
+            # Se não houver invoice, usar valor_mensal do contrato (fallback)
+            rateios[contrato.id]['receita'] = contrato.valor_mensal
+            rateios[contrato.id]['detalhamento']['invoices'].append({
+                'observacao': 'Invoice não encontrado - usado valor_mensal do contrato',
+                'valor': float(contrato.valor_mensal)
+            })
     
     # Ratear domínios
     for cost in custos_por_tipo['dominios']:
@@ -278,23 +314,39 @@ def _calcular_rateios(contratos, custos_por_tipo, primeiro_dia, ultimo_dia) -> d
                     'rateio': len(contratos_backup)
                 })
     
-    # Ratear Emails (seguem o domínio)
+    # Emails (SEM rateio - custo direto do contrato)
     for cost in custos_por_tipo['emails']:
-        contratos_email = [c for c in contratos_list if cost.email.dominio in c.dominios.all()]
-        
-        if contratos_email:
+        # Email pertence diretamente a um contrato específico
+        if cost.email.contrato in contratos_list:
+            contrato = cost.email.contrato
             custo_mensal = calcular_custo_mensal(cost)
-            custo_rateado = ratear_por_contratos(custo_mensal, contratos_email)
             
-            for contrato in contratos_email:
-                rateios[contrato.id]['custo_emails'] += custo_rateado
-                rateios[contrato.id]['detalhamento']['emails'].append({
-                    'dominio': cost.email.dominio.nome,
-                    'fornecedor': cost.email.fornecedor,
-                    'custo': float(custo_rateado),
-                    'custo_total': float(custo_mensal),
-                    'rateio': len(contratos_email)
-                })
+            rateios[contrato.id]['custo_emails'] += custo_mensal
+            rateios[contrato.id]['detalhamento']['emails'].append({
+                'dominio': cost.email.dominio.nome,
+                'fornecedor': cost.email.fornecedor,
+                'custo': float(custo_mensal),
+                'custo_total': float(custo_mensal),
+                'rateio': 1  # Sem rateio
+            })
+    
+    # Despesas Adicionais (diretas por contrato)
+    mes_ref = primeiro_dia.month
+    ano_ref = primeiro_dia.year
+    
+    despesas_adicionais = DespesaAdicional.objects.filter(
+        mes_referencia=mes_ref,
+        ano_referencia=ano_ref,
+        contrato__in=contratos_list
+    ).select_related('contrato')
+    
+    for despesa in despesas_adicionais:
+        rateios[despesa.contrato.id]['custo_despesas_adicionais'] += despesa.valor
+        rateios[despesa.contrato.id]['detalhamento']['despesas_adicionais'].append({
+            'descricao': despesa.descricao,
+            'valor': float(despesa.valor),
+            'observacoes': despesa.observacoes
+        })
     
     return dict(rateios)
 
@@ -302,6 +354,10 @@ def _calcular_rateios(contratos, custos_por_tipo, primeiro_dia, ultimo_dia) -> d
 def _criar_snapshot(contrato, periodo, rateio_dados) -> ContratoSnapshot:
     """
     Cria um snapshot imutável de um contrato em um período.
+    
+    Para contratos internos (cliente.tipo == 'interno'):
+    - Margem percentual = NULL (não faz sentido calcular sem receita)
+    - Usado para controlar custos operacionais próprios
     """
     receita = rateio_dados['receita']
     custo_total = (
@@ -309,11 +365,27 @@ def _criar_snapshot(contrato, periodo, rateio_dados) -> ContratoSnapshot:
         rateio_dados['custo_hostings'] +
         rateio_dados['custo_vps'] +
         rateio_dados['custo_backups'] +
-        rateio_dados['custo_emails']
+        rateio_dados['custo_emails'] +
+        rateio_dados['custo_despesas_adicionais']
     )
     
     margem = receita - custo_total
-    margem_percentual = (margem / receita * 100) if receita > 0 else Decimal('0.00')
+    
+    # Calcular margem percentual
+    # Para contratos internos (sem receita real), margem percentual = NULL
+    is_interno = contrato.cliente.tipo == 'interno'
+    
+    if is_interno or receita == 0:
+        # Contrato interno ou sem receita: não calcular margem percentual
+        margem_percentual = None
+    elif receita > 0:
+        # Contrato normal: calcular margem percentual com limite
+        margem_pct_raw = (margem / receita * 100)
+        # Limitar entre -99999.99 e 99999.99 para evitar overflow
+        margem_pct_raw = max(Decimal('-99999.99'), min(margem_pct_raw, Decimal('99999.99')))
+        margem_percentual = margem_pct_raw.quantize(Decimal('0.01'))
+    else:
+        margem_percentual = Decimal('0.00')
     
     snapshot = ContratoSnapshot.objects.create(
         contrato=contrato,
@@ -324,9 +396,10 @@ def _criar_snapshot(contrato, periodo, rateio_dados) -> ContratoSnapshot:
         custo_vps=rateio_dados['custo_vps'],
         custo_backups=rateio_dados['custo_backups'],
         custo_emails=rateio_dados['custo_emails'],
+        custo_despesas_adicionais=rateio_dados['custo_despesas_adicionais'],
         custo_total=custo_total,
         margem=margem,
-        margem_percentual=margem_percentual.quantize(Decimal('0.01')),
+        margem_percentual=margem_percentual,
         detalhamento=rateio_dados['detalhamento']
     )
     

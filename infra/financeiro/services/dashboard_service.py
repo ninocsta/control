@@ -58,7 +58,13 @@ class DashboardService:
         receita_total = snapshots.aggregate(Sum('receita'))['receita__sum'] or Decimal('0.00')
         despesa_total = snapshots.aggregate(Sum('custo_total'))['custo_total__sum'] or Decimal('0.00')
         lucro_total = receita_total - despesa_total
-        margem_pct = (lucro_total / receita_total * 100) if receita_total > 0 else Decimal('0.00')
+        
+        # Calcular margem % apenas se houver receita
+        # Contratos internos (receita zero) não têm margem percentual
+        if receita_total > 0:
+            margem_pct = (lucro_total / receita_total * 100)
+        else:
+            margem_pct = None
         
         # Previsão do mês atual (NÃO usar snapshots)
         previsao = self._calcular_previsao_mes_atual()
@@ -183,12 +189,15 @@ class DashboardService:
             
             dados_meses = []
             for snapshot in snapshots_contrato:
+                # Para contratos internos, margem_percentual pode ser NULL
+                margem_pct = snapshot.margem_percentual if snapshot.margem_percentual is not None else None
                 dados_meses.append({
                     'mes': f"{snapshot.periodo.mes:02d}/{snapshot.periodo.ano}",
                     'receita': snapshot.receita,
                     'custo': snapshot.custo_total,
                     'lucro': snapshot.margem,
-                    'margem_pct': snapshot.margem_percentual
+                    'margem_pct': margem_pct,
+                    'is_interno': snapshot.contrato.cliente.tipo == 'interno'
                 })
             
             # Calcular tendência (último mês vs primeiro mês)
@@ -343,12 +352,194 @@ class DashboardService:
     
     def _calcular_urgencia(self, dias_restantes):
         """Define nível de urgência baseado em dias restantes."""
-        if dias_restantes <= 7:
+        if dias_restantes <= 0:
+            return {'nivel': 'vencido', 'cor': '#8b0000', 'texto': 'VENCIDO'}
+        elif dias_restantes <= 7:
             return {'nivel': 'alta', 'cor': '#dc3545', 'texto': 'URGENTE'}
         elif dias_restantes <= 15:
             return {'nivel': 'media', 'cor': '#ffc107', 'texto': 'Atenção'}
         else:
             return {'nivel': 'baixa', 'cor': '#28a745', 'texto': 'Normal'}
+    
+    def get_vencimentos_incluindo_vencidos(self, dias_futuro=30, dias_passado=30):
+        """
+        Retorna vencimentos incluindo itens já vencidos.
+        
+        Args:
+            dias_futuro: Quantos dias no futuro buscar
+            dias_passado: Quantos dias no passado buscar (vencidos)
+        """
+        data_inicio = self.hoje - timedelta(days=dias_passado)
+        data_limite = self.hoje + timedelta(days=dias_futuro)
+        
+        vencimentos = []
+        
+        # Domínios
+        dominios = DomainCost.objects.filter(
+            vencimento__gte=data_inicio,
+            vencimento__lte=data_limite,
+            ativo=True
+        ).select_related('domain').order_by('vencimento')
+        
+        for custo in dominios:
+            dias_restantes = (custo.vencimento - self.hoje).days
+            vencimentos.append({
+                'tipo': 'Domínio',
+                'nome': custo.domain.nome,
+                'fornecedor': custo.domain.fornecedor,
+                'valor': custo.valor_total,
+                'vencimento': custo.vencimento,
+                'dias_restantes': dias_restantes,
+                'urgencia': self._calcular_urgencia(dias_restantes),
+                'vencido': dias_restantes < 0
+            })
+        
+        # VPS
+        vps_costs = VPSCost.objects.filter(
+            vencimento__gte=data_inicio,
+            vencimento__lte=data_limite,
+            ativo=True
+        ).select_related('vps').order_by('vencimento')
+        
+        for custo in vps_costs:
+            dias_restantes = (custo.vencimento - self.hoje).days
+            vencimentos.append({
+                'tipo': 'VPS',
+                'nome': custo.vps.nome,
+                'fornecedor': custo.vps.fornecedor,
+                'valor': custo.valor_total,
+                'vencimento': custo.vencimento,
+                'dias_restantes': dias_restantes,
+                'urgencia': self._calcular_urgencia(dias_restantes),
+                'vencido': dias_restantes < 0
+            })
+        
+        # Hostings
+        hostings = HostingCost.objects.filter(
+            vencimento__gte=data_inicio,
+            vencimento__lte=data_limite,
+            ativo=True
+        ).select_related('hosting').order_by('vencimento')
+        
+        for custo in hostings:
+            dias_restantes = (custo.vencimento - self.hoje).days
+            vencimentos.append({
+                'tipo': 'Hosting',
+                'nome': custo.hosting.nome,
+                'fornecedor': custo.hosting.fornecedor,
+                'valor': custo.valor_total,
+                'vencimento': custo.vencimento,
+                'dias_restantes': dias_restantes,
+                'urgencia': self._calcular_urgencia(dias_restantes),
+                'vencido': dias_restantes < 0
+            })
+        
+        # Emails
+        emails = DomainEmailCost.objects.filter(
+            vencimento__gte=data_inicio,
+            vencimento__lte=data_limite,
+            ativo=True
+        ).select_related('email__dominio').order_by('vencimento')
+        
+        for custo in emails:
+            dias_restantes = (custo.vencimento - self.hoje).days
+            vencimentos.append({
+                'tipo': 'Email',
+                'nome': f"Email {custo.email.dominio.nome}",
+                'fornecedor': custo.email.fornecedor,
+                'valor': custo.valor_total,
+                'vencimento': custo.vencimento,
+                'dias_restantes': dias_restantes,
+                'urgencia': self._calcular_urgencia(dias_restantes),
+                'vencido': dias_restantes < 0
+            })
+        
+        # Backups
+        backups = VPSBackupCost.objects.filter(
+            vencimento__gte=data_inicio,
+            vencimento__lte=data_limite,
+            ativo=True
+        ).select_related('backup__vps').order_by('vencimento')
+        
+        for custo in backups:
+            dias_restantes = (custo.vencimento - self.hoje).days
+            vencimentos.append({
+                'tipo': 'Backup',
+                'nome': f"{custo.backup.nome} ({custo.backup.vps.nome})",
+                'fornecedor': custo.backup.fornecedor or custo.backup.vps.fornecedor,
+                'valor': custo.valor_total,
+                'vencimento': custo.vencimento,
+                'dias_restantes': dias_restantes,
+                'urgencia': self._calcular_urgencia(dias_restantes),
+                'vencido': dias_restantes < 0
+            })
+        
+        # Ordenar: vencidos primeiro (mais antigos), depois próximos (mais próximos)
+        vencimentos.sort(key=lambda x: (not x['vencido'], x['vencimento']))
+        
+        return vencimentos
+    
+    def get_status_invoices(self):
+        """
+        Retorna status dos invoices do mês atual e meses anteriores em atraso.
+        """
+        mes_atual = self.hoje.month
+        ano_atual = self.hoje.year
+        
+        # Invoices do mês atual
+        invoices_mes_atual = Invoice.objects.filter(
+            mes_referencia=mes_atual,
+            ano_referencia=ano_atual
+        ).select_related('cliente').order_by('status', 'vencimento')
+        
+        # Invoices em atraso (meses anteriores não pagos)
+        invoices_atrasados = Invoice.objects.filter(
+            Q(ano_referencia__lt=ano_atual) | 
+            Q(ano_referencia=ano_atual, mes_referencia__lt=mes_atual),
+            status__in=['pendente', 'atrasado']
+        ).select_related('cliente').order_by('ano_referencia', 'mes_referencia')
+        
+        # Calcular totais mês atual
+        total_mes_atual = invoices_mes_atual.aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
+        pagos_mes_atual = invoices_mes_atual.filter(status='pago').aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
+        pendentes_mes_atual = invoices_mes_atual.filter(status='pendente').aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
+        
+        # Calcular totais atrasados
+        total_atrasados = invoices_atrasados.aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
+        
+        return {
+            'mes_atual': {
+                'mes': mes_atual,
+                'ano': ano_atual,
+                'total': total_mes_atual,
+                'pago': pagos_mes_atual,
+                'pendente': pendentes_mes_atual,
+                'qtd_total': invoices_mes_atual.count(),
+                'qtd_pagos': invoices_mes_atual.filter(status='pago').count(),
+                'qtd_pendentes': invoices_mes_atual.filter(status='pendente').count(),
+                'invoices': [{
+                    'id': inv.id,
+                    'cliente': inv.cliente.nome,
+                    'valor': inv.valor_total,
+                    'status': inv.status,
+                    'vencimento': inv.vencimento,
+                    'dias_vencimento': (inv.vencimento - self.hoje).days if inv.vencimento else None
+                } for inv in invoices_mes_atual]
+            },
+            'atrasados': {
+                'total': total_atrasados,
+                'qtd': invoices_atrasados.count(),
+                'invoices': [{
+                    'id': inv.id,
+                    'cliente': inv.cliente.nome,
+                    'valor': inv.valor_total,
+                    'mes_ref': f"{inv.mes_referencia:02d}/{inv.ano_referencia}",
+                    'status': inv.status,
+                    'vencimento': inv.vencimento,
+                    'dias_atraso': (self.hoje - inv.vencimento).days if inv.vencimento else 0
+                } for inv in invoices_atrasados]
+            }
+        }
     
     # ========================================
     # 4️⃣ CUSTOS POR CATEGORIA

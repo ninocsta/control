@@ -21,16 +21,18 @@ class DomainEmailCostInline(admin.TabularInline):
 @admin.register(DomainEmail)
 class DomainEmailAdmin(admin.ModelAdmin):
     list_display = (
-        'dominio', 'fornecedor', 'quantidade_caixas',
+        'dominio', 'contrato', 'fornecedor', 'quantidade_caixas',
         'ativo', 'custo_atual', 'criado_em'
     )
-    list_filter = ('ativo', 'fornecedor', 'criado_em')
-    search_fields = ('dominio__nome', 'fornecedor')
+    list_filter = ('ativo', 'fornecedor', 'criado_em', 'contrato__cliente')
+    search_fields = ('dominio__nome', 'fornecedor', 'contrato__nome', 'contrato__cliente__nome')
     inlines = [DomainEmailCostInline]
+    autocomplete_fields = ['dominio', 'contrato']
     
     fieldsets = (
         ('Informações do Email', {
-            'fields': ('dominio', 'fornecedor', 'quantidade_caixas')
+            'fields': ('dominio', 'contrato', 'fornecedor', 'quantidade_caixas'),
+            'description': 'Email é custo singular do contrato, sem rateio entre contratos.'
         }),
         ('Status', {
             'fields': ('ativo',)

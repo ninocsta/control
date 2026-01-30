@@ -204,7 +204,8 @@ Um custo (DomainCost, VPSCost, etc) está ativo se:
 - Backup segue a VPS (rateio igual aos contratos da VPS)
 
 ### ✅ Emails
-- Email segue o domínio (rateio igual aos contratos do domínio)
+- Email é custo direto do contrato específico (SEM rateio)
+- Cada email pertence a um único contrato/cliente
 
 ---
 
@@ -228,24 +229,14 @@ Um custo (DomainCost, VPSCost, etc) está ativo se:
 ## 🔥 MELHORIAS FUTURAS
 
 ### Curto Prazo
-- [ ] Enviar emails/notificações em `task_alertar_vencimentos`
-- [ ] Exportar relatórios em PDF/Excel
+- [ ] Enviar notificações em `task_alertar_vencimentos`
 - [ ] Gráficos no dashboard (Chart.js ou similar)
 - [ ] Filtros avançados no dashboard (por cliente, período)
 
 ### Médio Prazo
 - [ ] API REST (Django REST Framework) para integração
 - [ ] Previsão de custos futuros (ML)
-- [ ] Reconciliação bancária (integração com bancos)
-- [ ] Multi-moeda e conversão cambial
 
-### Longo Prazo
-- [ ] Sistema de aprovação de fechamentos (workflow)
-- [ ] Auditoria completa (django-auditlog)
-- [ ] Dashboards personalizáveis por usuário
-- [ ] Integração com ERP/CRM
-
----
 
 ## 🛡️ SEGURANÇA E BOAS PRÁTICAS
 

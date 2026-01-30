@@ -58,21 +58,18 @@ class Invoice(models.Model):
     class Meta:
         verbose_name = 'Invoice'
         verbose_name_plural = 'Invoices'
-        ordering = ['-ano_referencia', '-mes_referencia']
-        constraints = [
-            models.UniqueConstraint(
-                fields=['cliente', 'mes_referencia', 'ano_referencia'],
-                name='unique_invoice_per_cliente_month'
-            )
-        ]
+        ordering = ['-ano_referencia', '-mes_referencia', '-criado_em']
+        # Removida constraint única - permite múltiplos invoices por cliente/mês
+        # (invoice mensal + invoices adicionais de horas extras, implementação, etc)
         indexes = [
             models.Index(fields=['mes_referencia', 'ano_referencia']),
             models.Index(fields=['status']),
             models.Index(fields=['vencimento']),
+            models.Index(fields=['cliente', 'mes_referencia', 'ano_referencia']),
         ]
     
     def __str__(self):
-        return f"Invoice {self.cliente.nome} - {self.mes_referencia:02d}/{self.ano_referencia}"
+        return f"Invoice {self.cliente.nome} - {self.mes_referencia:02d}/{self.ano_referencia} - R$ {self.valor_total}"
     
     def clean(self):
         if not 1 <= self.mes_referencia <= 12:

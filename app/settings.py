@@ -162,17 +162,42 @@ JAZZMIN_SETTINGS = {
     "site_icon": "fas fa-laptop-code",
     "welcome_sign": "Bem-vindo ao Painel!",
     "copyright": "© 2026 Minha Empresa",
+    "show_sidebar": True,
 
+    # 🔗 Links customizados no menu
+    "custom_links": {
+        "financeiro": [
+            {
+                "name": "📊 Dashboard Financeiro",
+                "url": "/financeiro/dashboard/",
+                "icon": "fas fa-chart-line",
+                "permissions": ["auth.view_user"],
+            },
+        ]
+    },
+    
+    # 📋 Ordem e ícones dos apps no menu
+    "icons": {
+        "auth": "fas fa-users-cog",
+        "auth.user": "fas fa-user",
+        "auth.Group": "fas fa-users",
+        "clientes.cliente": "fas fa-user-tie",
+        "contratos.contrato": "fas fa-file-contract",
+        "invoices.invoice": "fas fa-file-invoice-dollar",
+        "dominios.dominio": "fas fa-globe",
+        "dominios.domaincost": "fas fa-dollar-sign",
+        "vps.vps": "fas fa-server",
+        "hosting.hosting": "fas fa-cloud",
+        "emails.domainemail": "fas fa-envelope",
+        "financeiro.periodofinanceiro": "fas fa-calendar-alt",
+        "financeiro.contratosnapshot": "fas fa-camera",
+    },
+    
+    # 🏠 Botão de dashboard na topbar
+    "topmenu_links": [
+        {"name": "Início", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "📊 Dashboard", "url": "/financeiro/dashboard/", "permissions": ["auth.view_user"]},
+        {"model": "auth.User"},
+    ],
 
-
-
-
-    # 🧰 UI Customizer
-    "show_ui_builder": True,
-    "use_google_fonts_cdn": True,
-
-    # 🔁 Change form format
-    "changeform_format": "horizontal_tabs",
-    "changeform_format_overrides": {},
-    "language_chooser": True,
 }
