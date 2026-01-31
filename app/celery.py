@@ -18,7 +18,7 @@ app.conf.beat_schedule = {
     },
     'gerar-invoices-mes-atual': {
         'task': 'invoices.tasks.task_gerar_invoices_mes_atual',
-        'schedule': crontab(day_of_month='1', hour='0', minute='10'),
+        'schedule': crontab(day_of_month='1', hour='0', minute='30'),
         'options': {'expires': 3600}
     },
     'fechar-periodo-mes-anterior': {
@@ -33,7 +33,7 @@ app.conf.beat_schedule = {
     },
     'marcar-invoices-atrasados': {
         'task': 'invoices.tasks.task_marcar_invoices_atrasados',
-        'schedule': crontab(hour='9', minute='0'),
+        'schedule': crontab(hour='6', minute='0'),
         'options': {'expires': 3600}
     },
 }
