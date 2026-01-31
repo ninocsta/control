@@ -2,10 +2,15 @@
 {% load static %}
 {% load financeiro_tags %}
 
+<link rel="stylesheet" href="{% static 'css/global.css' %}">
+
 {% block title %}Dashboard Financeiro e Operacional{% endblock %}
 
 {% block extrastyle %}
 <style>
+    .row {
+        flex-direction: column !important;
+    }
     .dashboard-container {
         padding: 20px;
         background: #f5f5f5;
