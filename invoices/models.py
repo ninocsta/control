@@ -1,5 +1,6 @@
 from django.db import models
 from clientes.models import Cliente
+from contratos.models import Contrato
 from django.core.validators import MinValueValidator
 from decimal import Decimal
 from django.core.exceptions import ValidationError
@@ -74,3 +75,69 @@ class Invoice(models.Model):
     def clean(self):
         if not 1 <= self.mes_referencia <= 12:
             raise ValidationError('Mês deve estar entre 1 e 12')
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Manter vínculo sincronizado com o valor do invoice
+        self.itens_contrato.update(valor=self.valor_total)
+
+
+class InvoiceContrato(models.Model):
+    """
+    Vínculo entre Invoice e Contrato, permitindo alocar receita por contrato.
+    
+    Observações:
+    - Incremental: não altera Invoice existente
+    - Permite coexistência com lógica antiga (fallback)
+    """
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.PROTECT,
+        related_name='itens_contrato'
+    )
+    contrato = models.ForeignKey(
+        Contrato,
+        on_delete=models.PROTECT,
+        related_name='itens_invoice'
+    )
+    valor = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = 'Invoice x Contrato'
+        verbose_name_plural = 'Invoices x Contratos'
+        ordering = ['-criado_em']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['invoice', 'contrato'],
+                name='unique_invoice_contrato'
+            ),
+            models.UniqueConstraint(
+                fields=['invoice'],
+                name='unique_invoice_contrato_invoice'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['invoice']),
+            models.Index(fields=['contrato']),
+        ]
+    
+    def __str__(self):
+        return f"Invoice {self.invoice.id} → {self.contrato} (R$ {self.valor})"
+
+    def clean(self):
+        if self.invoice_id:
+            qs = InvoiceContrato.objects.filter(invoice_id=self.invoice_id)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError('Este invoice já possui um contrato vinculado.')
+
+    def save(self, *args, **kwargs):
+        if self.invoice_id:
+            self.valor = self.invoice.valor_total
+        super().save(*args, **kwargs)

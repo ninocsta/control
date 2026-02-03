@@ -690,3 +690,15 @@ class DashboardService:
             })
         
         return resultado
+
+    def get_evolucao_chart_data(self, meses=12):
+        """
+        Dados prontos para gráfico de evolução mensal (Chart.js).
+        """
+        dados = self.get_evolucao_mensal(meses=meses)
+        return {
+            'labels': [d['mes'] for d in dados],
+            'receitas': [float(d['receita']) for d in dados],
+            'custos': [float(d['custo']) for d in dados],
+            'margens': [float(d['margem']) for d in dados],
+        }

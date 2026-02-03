@@ -16,7 +16,7 @@ from collections import defaultdict
 
 from infra.financeiro.models import PeriodoFinanceiro, ContratoSnapshot, DespesaAdicional
 from contratos.models import Contrato
-from invoices.models import Invoice
+from invoices.models import InvoiceContrato
 from infra.dominios.models import DomainCost
 from infra.hosting.models import HostingCost
 from infra.vps.models import VPSCost
@@ -192,40 +192,42 @@ def _calcular_rateios(contratos, custos_por_tipo, primeiro_dia, ultimo_dia) -> d
         }
     })
     
-    # Calcular receita REAL de cada contrato (soma de invoices pagos no período)
-    # Buscar invoices do período (referência ao mês/ano do primeiro_dia)
+    # Receita por contrato via vínculo explícito (InvoiceContrato)
     mes_ref = primeiro_dia.month
     ano_ref = primeiro_dia.year
     
+    itens = InvoiceContrato.objects.filter(
+        contrato__in=contratos_list,
+        invoice__mes_referencia=mes_ref,
+        invoice__ano_referencia=ano_ref
+    ).select_related('invoice', 'contrato')
+    
+    itens_por_contrato = defaultdict(list)
+    for item in itens:
+        itens_por_contrato[item.contrato_id].append(item)
+    
     for contrato in contratos_list:
-        # Buscar TODOS os invoices do cliente para este período
-        # Pode haver múltiplos: invoice automático + invoice de cobrança adicional
-        invoices = Invoice.objects.filter(
-            cliente=contrato.cliente,
-            mes_referencia=mes_ref,
-            ano_referencia=ano_ref
-        )
+        itens_contrato = itens_por_contrato.get(contrato.id, [])
         
-        if invoices.exists():
-            # Somar TODOS os invoices do período
-            receita_total = sum(inv.valor_total for inv in invoices)
-            rateios[contrato.id]['receita'] = receita_total
+        if itens_contrato:
+            receita = sum(i.valor for i in itens_contrato)
+            rateios[contrato.id]['receita'] = receita
             
-            # Adicionar detalhamento de cada invoice
-            for inv in invoices:
+            for item in itens_contrato:
+                inv = item.invoice
                 rateios[contrato.id]['detalhamento']['invoices'].append({
                     'id': inv.id,
                     'status': inv.status,
-                    'valor': float(inv.valor_total),
+                    'valor_invoice': float(inv.valor_total),
+                    'valor_contrato': float(item.valor),
                     'vencimento': str(inv.vencimento),
                     'order_nsu': inv.order_nsu or ''
                 })
         else:
-            # Se não houver invoice, usar valor_mensal do contrato (fallback)
-            rateios[contrato.id]['receita'] = contrato.valor_mensal
+            # Sem invoice no período: receita 0
+            rateios[contrato.id]['receita'] = Decimal('0.00')
             rateios[contrato.id]['detalhamento']['invoices'].append({
-                'observacao': 'Invoice não encontrado - usado valor_mensal do contrato',
-                'valor': float(contrato.valor_mensal)
+                'observacao': 'Sem invoice no período - receita zerada'
             })
     
     # Ratear domínios

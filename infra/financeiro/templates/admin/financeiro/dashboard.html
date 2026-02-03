@@ -4,6 +4,11 @@
 
 {% block title %}Dashboard Financeiro e Operacional{% endblock %}
 
+{% block extrahead %}
+{{ block.super }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block extrastyle %}
 <style>
 
@@ -206,7 +211,7 @@
         display: inline-block;
         padding: 10px 20px;
         background: #417690;
-        color: white;
+        color: white !important; 
         text-decoration: none;
         border-radius: 4px;
         font-size: 14px;
@@ -217,7 +222,7 @@
         background: #356276;
         color: white;
     }
-    
+
     /* Tendência */
     .tendencia {
         font-size: 18px;
@@ -227,6 +232,7 @@
 {% endblock %}
 
 {% block content %}
+{{ evolucao_chart|json_script:"evolucao-chart-data" }}
 <div class="dashboard-container">
     <div class="dashboard-header">
         <h1>📊 Dashboard Financeiro e Operacional</h1>
@@ -599,28 +605,98 @@
         <h2 class="section-title">📊 Evolução Mensal (Últimos 12 Meses)</h2>
         
         {% if evolucao_mensal %}
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Mês</th>
-                    <th class="text-right">Receita</th>
-                    <th class="text-right">Custo</th>
-                    <th class="text-right">Margem</th>
-                    <th class="text-right">Margem %</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for mes in evolucao_mensal %}
-                <tr>
-                    <td><strong>{{ mes.mes }}</strong></td>
-                    <td class="text-right" style="color: #28a745;">R$ {{ mes.receita|floatformat:2 }}</td>
-                    <td class="text-right" style="color: #dc3545;">R$ {{ mes.custo|floatformat:2 }}</td>
-                    <td class="text-right" style="color: #2196F3;"><strong>R$ {{ mes.margem|floatformat:2 }}</strong></td>
-                    <td class="text-right">{{ mes.margem_pct|margem_format|safe }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div style="height: 320px;">
+            <canvas id="evolucaoChart"></canvas>
+        </div>
+        
+        <details style="margin-top: 15px;">
+            <summary style="cursor: pointer; color: #417690; font-weight: 600;">Ver tabela detalhada</summary>
+            <table class="table" style="margin-top: 10px;">
+                <thead>
+                    <tr>
+                        <th>Mês</th>
+                        <th class="text-right">Receita</th>
+                        <th class="text-right">Custo</th>
+                        <th class="text-right">Margem</th>
+                        <th class="text-right">Margem %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for mes in evolucao_mensal %}
+                    <tr>
+                        <td><strong>{{ mes.mes }}</strong></td>
+                        <td class="text-right" style="color: #28a745;">R$ {{ mes.receita|floatformat:2 }}</td>
+                        <td class="text-right" style="color: #dc3545;">R$ {{ mes.custo|floatformat:2 }}</td>
+                        <td class="text-right" style="color: #2196F3;"><strong>R$ {{ mes.margem|floatformat:2 }}</strong></td>
+                        <td class="text-right">{{ mes.margem_pct|margem_format|safe }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+        
+        <script>
+            (function() {
+                const dataEl = document.getElementById('evolucao-chart-data');
+                const ctx = document.getElementById('evolucaoChart');
+                if (!dataEl || !ctx) return;
+                
+                const chartData = JSON.parse(dataEl.textContent);
+                if (!chartData.labels || !chartData.labels.length) return;
+                
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: chartData.labels,
+                        datasets: [
+                            {
+                                label: 'Receita',
+                                data: chartData.receitas,
+                                backgroundColor: 'rgba(40, 167, 69, 0.6)',
+                                borderColor: 'rgba(40, 167, 69, 1)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'Custo',
+                                data: chartData.custos,
+                                backgroundColor: 'rgba(220, 53, 69, 0.6)',
+                                borderColor: 'rgba(220, 53, 69, 1)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'Margem',
+                                data: chartData.margens,
+                                backgroundColor: 'rgba(33, 150, 243, 0.6)',
+                                borderColor: 'rgba(33, 150, 243, 1)',
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: (value) => `R$ ${value}`
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const value = context.raw || 0;
+                                        return `${context.dataset.label}: R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            })();
+        </script>
         {% else %}
         <div class="empty-state">
             <p>Nenhum período fechado disponível</p>
@@ -633,7 +709,7 @@
         <h3 style="margin: 0 0 15px 0; font-size: 16px;">🔗 Links Rápidos</h3>
         <div style="display: flex; gap: 15px; flex-wrap: wrap;">
             <a href="{% url 'admin:index' %}" class="btn-voltar">← Voltar ao Admin</a>
-            <a href="{% url 'admin:contratos_contrato_changelist' %}" class="btn-voltar">Contratos</a>
+            <a href="{% url 'admin:contratos_contrato_changelist' %} " class="btn-voltar">Contratos</a>
             <a href="{% url 'admin:invoices_invoice_changelist' %}" class="btn-voltar">Invoices</a>
             <a href="{% url 'admin:financeiro_periodofinanceiro_changelist' %}" class="btn-voltar">Períodos Financeiros</a>
             <a href="{% url 'admin:financeiro_contratosnapshot_changelist' %}" class="btn-voltar">Snapshots</a>

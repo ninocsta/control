@@ -2,19 +2,14 @@
 Tarefas assíncronas do Celery para o módulo de invoices.
 
 Tasks:
-- Gerar invoices mensais para todos os clientes
+- Gerar invoices mensais para todos os contratos
 """
 from celery import shared_task
-from datetime import date, timedelta
-from dateutil.relativedelta import relativedelta
-from django.utils import timezone
+from datetime import date
 from django.db import transaction, models
-from django.core.exceptions import ValidationError
 import logging
-from decimal import Decimal
 
-from invoices.models import Invoice
-from clientes.models import Cliente
+from invoices.models import Invoice, InvoiceContrato
 from contratos.models import Contrato
 
 logger = logging.getLogger(__name__)
@@ -23,11 +18,11 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=3)
 def task_gerar_invoices_mes_atual(self):
     """
-    Gera invoices de cobrança para todos os clientes com contratos ativos.
+    Gera invoices de cobrança para todos os contratos ativos.
     
     Regras:
-    - 1 invoice por cliente por mês
-    - Valor = soma dos contratos ativos no mês
+    - 1 invoice por contrato por mês
+    - Valor = valor_mensal do contrato
     - Vencimento = dia 5 do mês de referência
     - Idempotente: não gera duplicatas
     
@@ -45,57 +40,76 @@ def task_gerar_invoices_mes_atual(self):
     
     invoices_criados = []
     invoices_existentes = []
-    clientes_sem_contrato = []
+    contratos_sem_invoice = []
+    clientes_com_invoice_sem_vinculo = set()
     erros = []
     
-    # Buscar todos os clientes ativos
-    clientes = Cliente.objects.filter(ativo=True)
+    # Clientes com invoice do período sem vínculo (evitar duplicação)
+    invoices_sem_vinculo = Invoice.objects.filter(
+        mes_referencia=mes,
+        ano_referencia=ano,
+        itens_contrato__isnull=True
+    ).values_list('cliente_id', flat=True)
+    clientes_com_invoice_sem_vinculo = set(invoices_sem_vinculo)
     
-    for cliente in clientes:
+    # Buscar contratos ativos
+    contratos_ativos = Contrato.objects.filter(
+        data_inicio__lte=primeiro_dia_mes
+    ).filter(
+        models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia_mes)
+    ).select_related('cliente')
+    
+    for contrato in contratos_ativos:
         try:
-            # Verificar se já existe invoice para este cliente neste mês
-            invoice_existente = Invoice.objects.filter(
-                cliente=cliente,
-                mes_referencia=mes,
-                ano_referencia=ano
-            ).first()
+            # Evitar duplicação se já existe invoice sem vínculo para o cliente
+            if contrato.cliente_id in clientes_com_invoice_sem_vinculo:
+                logger.warning(
+                    f"Cliente {contrato.cliente.nome} já possui invoice sem vínculo em {mes:02d}/{ano} - "
+                    f"pulando contrato {contrato.nome}"
+                )
+                contratos_sem_invoice.append({
+                    'contrato': contrato.nome,
+                    'cliente': contrato.cliente.nome,
+                    'motivo': 'Cliente já possui invoice sem vínculo no período'
+                })
+                continue
+            
+            # Verificar se já existe invoice para este contrato neste mês
+            invoice_existente = InvoiceContrato.objects.filter(
+                contrato=contrato,
+                invoice__mes_referencia=mes,
+                invoice__ano_referencia=ano
+            ).select_related('invoice').first()
             
             if invoice_existente:
                 invoices_existentes.append({
-                    'cliente': cliente.nome,
-                    'invoice_id': invoice_existente.id,
-                    'valor': float(invoice_existente.valor_total)
+                    'cliente': contrato.cliente.nome,
+                    'contrato': contrato.nome,
+                    'invoice_id': invoice_existente.invoice.id,
+                    'valor': float(invoice_existente.invoice.valor_total)
                 })
-                logger.info(f"Invoice já existe para {cliente.nome} - {mes:02d}/{ano}")
+                logger.info(
+                    f"Invoice já existe para contrato {contrato.nome} - {mes:02d}/{ano}"
+                )
                 continue
             
-            # Buscar contratos ativos do cliente no período
-            # Ativo = data_inicio <= primeiro_dia_mes E (data_fim null OU data_fim >= primeiro_dia_mes)
-            contratos_ativos = Contrato.objects.filter(
-                cliente=cliente,
-                data_inicio__lte=primeiro_dia_mes
-            ).filter(
-                models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia_mes)
-            )
-            
-            if not contratos_ativos.exists():
-                clientes_sem_contrato.append(cliente.nome)
-                logger.info(f"Cliente {cliente.nome} não possui contratos ativos em {mes:02d}/{ano}")
-                continue
-            
-            # Somar valores dos contratos ativos
-            valor_total = sum(
-                contrato.valor_mensal for contrato in contratos_ativos
-            )
+            valor_total = contrato.valor_mensal
             
             if valor_total <= 0:
-                logger.warning(f"Valor total zerado para {cliente.nome} - pulando invoice")
+                logger.warning(
+                    f"Valor total zerado para contrato {contrato.nome} - pulando invoice"
+                )
+                contratos_sem_invoice.append({
+                    'contrato': contrato.nome,
+                    'cliente': contrato.cliente.nome,
+                    'motivo': 'Valor mensal zerado'
+                })
                 continue
             
             # Criar invoice
             with transaction.atomic():
                 invoice = Invoice.objects.create(
-                    cliente=cliente,
+                    cliente=contrato.cliente,
                     mes_referencia=mes,
                     ano_referencia=ano,
                     valor_total=valor_total,
@@ -103,37 +117,47 @@ def task_gerar_invoices_mes_atual(self):
                     status='pendente'
                 )
                 
+                # Criar vínculo invoice ↔ contrato (receita por contrato)
+                InvoiceContrato.objects.create(
+                    invoice=invoice,
+                    contrato=contrato,
+                    valor=contrato.valor_mensal
+                )
+                
                 invoices_criados.append({
-                    'cliente': cliente.nome,
+                    'cliente': contrato.cliente.nome,
+                    'contrato': contrato.nome,
                     'invoice_id': invoice.id,
-                    'valor': float(valor_total),
-                    'contratos': [c.nome for c in contratos_ativos]
+                    'valor': float(valor_total)
                 })
                 
                 logger.info(
                     f"Invoice criado: {invoice} - "
-                    f"R$ {valor_total:,.2f} ({contratos_ativos.count()} contratos)"
+                    f"R$ {valor_total:,.2f} (contrato {contrato.nome})"
                 )
         
         except Exception as e:
             erros.append({
-                'cliente': cliente.nome,
+                'cliente': contrato.cliente.nome,
+                'contrato': contrato.nome,
                 'erro': str(e)
             })
-            logger.error(f"Erro ao gerar invoice para {cliente.nome}: {e}")
+            logger.error(
+                f"Erro ao gerar invoice para contrato {contrato.nome}: {e}"
+            )
     
     # Resumo da execução
     resultado = {
         'mes_referencia': f"{mes:02d}/{ano}",
-        'total_clientes': clientes.count(),
+        'total_contratos': contratos_ativos.count(),
         'invoices_criados': len(invoices_criados),
         'invoices_existentes': len(invoices_existentes),
-        'clientes_sem_contrato': len(clientes_sem_contrato),
+        'contratos_sem_invoice': len(contratos_sem_invoice),
         'erros': len(erros),
         'detalhes': {
             'criados': invoices_criados,
             'existentes': invoices_existentes,
-            'sem_contrato': clientes_sem_contrato,
+            'sem_invoice': contratos_sem_invoice,
             'erros': erros
         }
     }
@@ -141,7 +165,7 @@ def task_gerar_invoices_mes_atual(self):
     logger.info(
         f"Task concluída - {len(invoices_criados)} invoices criados, "
         f"{len(invoices_existentes)} já existiam, "
-        f"{len(clientes_sem_contrato)} sem contrato, "
+        f"{len(contratos_sem_invoice)} sem invoice, "
         f"{len(erros)} erros"
     )
     
