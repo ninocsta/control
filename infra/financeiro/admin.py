@@ -102,7 +102,8 @@ class PeriodoFinanceiroAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         """Bloquear edição se período estiver fechado."""
         if obj and obj.fechado:
-            return [f.name for f in self.model._meta.fields]
+            campos_modelo = [f.name for f in self.model._meta.fields]
+            return list(dict.fromkeys(campos_modelo + list(self.readonly_fields)))
         return self.readonly_fields
     
     def get_periodo(self, obj):
