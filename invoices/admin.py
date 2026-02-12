@@ -2,43 +2,27 @@ from django.contrib import admin
 from django.forms import BaseInlineFormSet
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
-from .models import Invoice, InvoiceContrato
+from .models import Invoice, InvoiceContrato, MessageQueue
 
 
 class InvoiceContratoInlineFormSet(BaseInlineFormSet):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        invoice = getattr(self, 'instance', None)
-        if not invoice or not invoice.pk:
-            return
-        for form in self.forms:
-            if form.instance.pk:
-                continue
-            if form.initial.get('valor'):
-                continue
-            form.initial['valor'] = invoice.valor_total
-
     def clean(self):
         super().clean()
         count = 0
         for form in self.forms:
             if form.cleaned_data and not form.cleaned_data.get('DELETE', False):
                 count += 1
-                invoice = getattr(self, 'instance', None)
-                if invoice and invoice.valor_total is not None:
-                    form.cleaned_data['valor'] = invoice.valor_total
         if count == 0:
-            raise ValidationError('Informe o contrato vinculado ao invoice.')
+            raise ValidationError('Informe ao menos um contrato vinculado ao invoice.')
 
 
 class InvoiceContratoInline(admin.TabularInline):
     model = InvoiceContrato
     formset = InvoiceContratoInlineFormSet
     extra = 0
-    max_num = 1
     autocomplete_fields = ('contrato',)
     fields = ('contrato', 'valor', 'criado_em')
-    readonly_fields = ('valor', 'criado_em')
+    readonly_fields = ('criado_em',)
 
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
@@ -66,7 +50,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         }),
         ('Integração InfinitePay', {
             'fields': (
-                'order_nsu', 'invoice_slug', 'transaction_nsu',
+                'order_nsu', 'invoice_slug', 'checkout_url', 'transaction_nsu',
                 'capture_method', 'receipt_url'
             ),
             'classes': ('collapse',)
@@ -87,18 +71,14 @@ class InvoiceAdmin(admin.ModelAdmin):
     valor_total_display.admin_order_field = 'valor_total'
     
     def contrato_vinculado(self, obj):
-        item = obj.itens_contrato.select_related('contrato').first()
-        if not item:
+        total = obj.itens_contrato.count()
+        if total == 0:
             return '—'
-        return item.contrato.nome
+        return f"{total} contrato(s)"
     contrato_vinculado.short_description = 'Contrato'
 
     def save_formset(self, request, form, formset, change):
-        instances = formset.save(commit=False)
-        for instance in instances:
-            instance.valor = form.instance.valor_total
-            instance.save()
-        formset.save_m2m()
+        formset.save()
 
     def status_badge(self, obj):
         colors = {
@@ -113,3 +93,11 @@ class InvoiceAdmin(admin.ModelAdmin):
             obj.get_status_display()
         )
     status_badge.short_description = 'Status'
+
+
+@admin.register(MessageQueue)
+class MessageQueueAdmin(admin.ModelAdmin):
+    list_display = ('invoice', 'tipo', 'status', 'agendado_para', 'tentativas', 'enviado_em')
+    list_filter = ('tipo', 'status')
+    search_fields = ('invoice__id', 'telefone', 'mensagem')
+    date_hierarchy = 'agendado_para'

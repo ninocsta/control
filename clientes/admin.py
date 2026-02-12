@@ -12,7 +12,7 @@ class ContratoInline(admin.TabularInline):
 
 @admin.register(Cliente)
 class ClienteAdmin(admin.ModelAdmin):
-    list_display = ('nome', 'email', 'tipo', 'ativo', 'data_criacao')
+    list_display = ('nome', 'email', 'tipo', 'vencimento_padrao', 'ativo', 'data_criacao')
     list_filter = ('tipo', 'ativo', 'data_criacao')
     search_fields = ('nome', 'email')
     inlines = [ContratoInline]
@@ -23,6 +23,9 @@ class ClienteAdmin(admin.ModelAdmin):
         }),
         ('Tipo', {
             'fields': ('tipo',)
+        }),
+        ('Cobrança', {
+            'fields': ('vencimento_padrao',)
         }),
         ('Status', {
             'fields': ('ativo',)

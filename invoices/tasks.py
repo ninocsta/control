@@ -1,16 +1,21 @@
 """
 Tarefas assíncronas do Celery para o módulo de invoices.
-
-Tasks:
-- Gerar invoices mensais para todos os contratos
 """
 from celery import shared_task
 from datetime import date
-from django.db import transaction, models
+from django.utils import timezone
+from django.db import models
 import logging
 
-from invoices.models import Invoice, InvoiceContrato
-from contratos.models import Contrato
+from invoices.models import Invoice, MessageQueue
+from invoices.services.invoice_service import gerar_invoices_mensais
+from invoices.services.infinitepay_service import InfinitePayService
+from invoices.services.message_queue_service import (
+    agendar_mensagens_cobranca,
+    registrar_falha_envio,
+    marcar_mensagem_enviada,
+)
+from invoices.services.waha_service import WahaService
 
 logger = logging.getLogger(__name__)
 
@@ -18,157 +23,26 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=3)
 def task_gerar_invoices_mes_atual(self):
     """
-    Gera invoices de cobrança para todos os contratos ativos.
+    Gera invoices de cobrança para todos os clientes com contratos ativos.
     
     Regras:
-    - 1 invoice por contrato por mês
-    - Valor = valor_mensal do contrato
-    - Vencimento = dia 5 do mês de referência
+    - 1 invoice por cliente por mês
+    - Valor = soma dos contratos ativos no mês
+    - Vencimento = cliente.vencimento_padrao (1-28)
     - Idempotente: não gera duplicatas
     
     Executar: Todo dia 1 do mês às 00:10.
     """
-    hoje = date.today()
-    mes = hoje.month
-    ano = hoje.year
-    
-    # Data de vencimento padrão: dia 10 do mês
-    vencimento = date(ano, mes, 10)
-    
-    # Primeiro dia do mês para validação de contratos ativos
-    primeiro_dia_mes = date(ano, mes, 1)
-    
-    invoices_criados = []
-    invoices_existentes = []
-    contratos_sem_invoice = []
-    clientes_com_invoice_sem_vinculo = set()
-    erros = []
-    
-    # Clientes com invoice do período sem vínculo (evitar duplicação)
-    invoices_sem_vinculo = Invoice.objects.filter(
-        mes_referencia=mes,
-        ano_referencia=ano,
-        itens_contrato__isnull=True
-    ).values_list('cliente_id', flat=True)
-    clientes_com_invoice_sem_vinculo = set(invoices_sem_vinculo)
-    
-    # Buscar contratos ativos
-    contratos_ativos = Contrato.objects.filter(
-        data_inicio__lte=primeiro_dia_mes
-    ).filter(
-        models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia_mes)
-    ).select_related('cliente')
-    
-    for contrato in contratos_ativos:
-        try:
-            # Evitar duplicação se já existe invoice sem vínculo para o cliente
-            if contrato.cliente_id in clientes_com_invoice_sem_vinculo:
-                logger.warning(
-                    f"Cliente {contrato.cliente.nome} já possui invoice sem vínculo em {mes:02d}/{ano} - "
-                    f"pulando contrato {contrato.nome}"
-                )
-                contratos_sem_invoice.append({
-                    'contrato': contrato.nome,
-                    'cliente': contrato.cliente.nome,
-                    'motivo': 'Cliente já possui invoice sem vínculo no período'
-                })
-                continue
-            
-            # Verificar se já existe invoice para este contrato neste mês
-            invoice_existente = InvoiceContrato.objects.filter(
-                contrato=contrato,
-                invoice__mes_referencia=mes,
-                invoice__ano_referencia=ano
-            ).select_related('invoice').first()
-            
-            if invoice_existente:
-                invoices_existentes.append({
-                    'cliente': contrato.cliente.nome,
-                    'contrato': contrato.nome,
-                    'invoice_id': invoice_existente.invoice.id,
-                    'valor': float(invoice_existente.invoice.valor_total)
-                })
-                logger.info(
-                    f"Invoice já existe para contrato {contrato.nome} - {mes:02d}/{ano}"
-                )
-                continue
-            
-            valor_total = contrato.valor_mensal
-            
-            if valor_total <= 0:
-                logger.warning(
-                    f"Valor total zerado para contrato {contrato.nome} - pulando invoice"
-                )
-                contratos_sem_invoice.append({
-                    'contrato': contrato.nome,
-                    'cliente': contrato.cliente.nome,
-                    'motivo': 'Valor mensal zerado'
-                })
-                continue
-            
-            # Criar invoice
-            with transaction.atomic():
-                invoice = Invoice.objects.create(
-                    cliente=contrato.cliente,
-                    mes_referencia=mes,
-                    ano_referencia=ano,
-                    valor_total=valor_total,
-                    vencimento=vencimento,
-                    status='pendente'
-                )
-                
-                # Criar vínculo invoice ↔ contrato (receita por contrato)
-                InvoiceContrato.objects.create(
-                    invoice=invoice,
-                    contrato=contrato,
-                    valor=contrato.valor_mensal
-                )
-                
-                invoices_criados.append({
-                    'cliente': contrato.cliente.nome,
-                    'contrato': contrato.nome,
-                    'invoice_id': invoice.id,
-                    'valor': float(valor_total)
-                })
-                
-                logger.info(
-                    f"Invoice criado: {invoice} - "
-                    f"R$ {valor_total:,.2f} (contrato {contrato.nome})"
-                )
-        
-        except Exception as e:
-            erros.append({
-                'cliente': contrato.cliente.nome,
-                'contrato': contrato.nome,
-                'erro': str(e)
-            })
-            logger.error(
-                f"Erro ao gerar invoice para contrato {contrato.nome}: {e}"
-            )
-    
-    # Resumo da execução
-    resultado = {
-        'mes_referencia': f"{mes:02d}/{ano}",
-        'total_contratos': contratos_ativos.count(),
-        'invoices_criados': len(invoices_criados),
-        'invoices_existentes': len(invoices_existentes),
-        'contratos_sem_invoice': len(contratos_sem_invoice),
-        'erros': len(erros),
-        'detalhes': {
-            'criados': invoices_criados,
-            'existentes': invoices_existentes,
-            'sem_invoice': contratos_sem_invoice,
-            'erros': erros
-        }
-    }
-    
+    resultado = gerar_invoices_mensais()
+
     logger.info(
-        f"Task concluída - {len(invoices_criados)} invoices criados, "
-        f"{len(invoices_existentes)} já existiam, "
-        f"{len(contratos_sem_invoice)} sem invoice, "
-        f"{len(erros)} erros"
+        "Task concluida - %s invoices criados, %s ja existiam, %s sem contrato, %s erros",
+        resultado['invoices_criados'],
+        resultado['invoices_existentes'],
+        resultado['clientes_sem_contrato'],
+        resultado['erros'],
     )
-    
+
     return resultado
 
 
@@ -228,3 +102,104 @@ def task_marcar_invoices_atrasados(self):
         logger.info("Nenhum invoice atrasado encontrado")
     
     return resultado
+
+
+@shared_task(bind=True, max_retries=3)
+def task_agendar_mensagens_cobranca(self):
+    """
+    Agenda mensagens de cobrança para invoices pendentes.
+
+    Regras:
+    - 5 dias antes
+    - 2 dias antes
+    - No dia do vencimento
+
+    Executar: Diariamente.
+    """
+    hoje = timezone.localdate()
+    invoices_pendentes = Invoice.objects.filter(
+        status='pendente',
+        vencimento__gte=hoje,
+    ).select_related('cliente')
+
+    resultado = agendar_mensagens_cobranca(invoices_pendentes, hoje=hoje)
+
+    logger.info(
+        "Mensagens agendadas: %s criadas, %s ignoradas",
+        resultado['criados'],
+        resultado['ignorados'],
+    )
+    return resultado
+
+
+@shared_task(bind=True, max_retries=3)
+def task_processar_fila_waha(self, limite=100):
+    """
+    Processa a fila de mensagens pendentes e envia via WAHA.
+
+    Executar: A cada hora.
+    """
+    agora = timezone.now()
+    mensagens = MessageQueue.objects.filter(
+        status='pendente',
+        agendado_para__lte=agora
+    ).order_by('agendado_para')[:limite]
+
+    service = WahaService()
+    enviados = 0
+    falhas = 0
+
+    for mensagem in mensagens:
+        try:
+            if not mensagem.telefone:
+                logger.warning('Mensagem %s sem telefone, marcando erro', mensagem.id)
+                registrar_falha_envio(mensagem)
+                falhas += 1
+                continue
+            service.send_message(mensagem.telefone, mensagem.mensagem)
+            marcar_mensagem_enviada(mensagem)
+            enviados += 1
+        except Exception as exc:
+            logger.error('Falha ao enviar mensagem %s: %s', mensagem.id, exc)
+            registrar_falha_envio(mensagem)
+            falhas += 1
+
+    return {
+        'processadas': len(mensagens),
+        'enviadas': enviados,
+        'falhas': falhas,
+    }
+
+
+@shared_task(bind=True, max_retries=3)
+def task_processar_checkouts_infinitepay(self, limite=100):
+    """
+    Reprocessa invoices pendentes sem checkout InfinitePay (retry seguro).
+
+    Executar: Periodicamente.
+    """
+    invoices = Invoice.objects.filter(
+        status='pendente',
+    ).filter(
+        models.Q(checkout_url='') | models.Q(checkout_url__isnull=True) |
+        models.Q(invoice_slug='') | models.Q(invoice_slug__isnull=True)
+    ).select_related('cliente')[:limite]
+
+    service = InfinitePayService()
+    processadas = 0
+    sucessos = 0
+    falhas = 0
+
+    for invoice in invoices:
+        processadas += 1
+        result = service.try_create_checkout(invoice)
+        if result:
+            sucessos += 1
+        else:
+            falhas += 1
+
+    return {
+        'processadas': processadas,
+        'sucessos': sucessos,
+        'falhas': falhas,
+    }

@@ -48,6 +48,7 @@ class Invoice(models.Model):
     # InfinitePay Integration
     order_nsu = models.CharField(max_length=100, blank=True, help_text="NSU do pedido InfinitePay")
     invoice_slug = models.CharField(max_length=100, blank=True, unique=True, null=True)
+    checkout_url = models.URLField(max_length=500, blank=True, help_text="URL do checkout InfinitePay")
     transaction_nsu = models.CharField(max_length=100, blank=True, help_text="NSU da transação")
     capture_method = models.CharField(max_length=50, blank=True)
     receipt_url = models.URLField(blank=True, help_text="URL do recibo de pagamento")
@@ -76,11 +77,6 @@ class Invoice(models.Model):
         if not 1 <= self.mes_referencia <= 12:
             raise ValidationError('Mês deve estar entre 1 e 12')
     
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-        # Manter vínculo sincronizado com o valor do invoice
-        self.itens_contrato.update(valor=self.valor_total)
-
 
 class InvoiceContrato(models.Model):
     """
@@ -116,10 +112,6 @@ class InvoiceContrato(models.Model):
                 fields=['invoice', 'contrato'],
                 name='unique_invoice_contrato'
             ),
-            models.UniqueConstraint(
-                fields=['invoice'],
-                name='unique_invoice_contrato_invoice'
-            ),
         ]
         indexes = [
             models.Index(fields=['invoice']),
@@ -129,15 +121,51 @@ class InvoiceContrato(models.Model):
     def __str__(self):
         return f"Invoice {self.invoice.id} → {self.contrato} (R$ {self.valor})"
 
-    def clean(self):
-        if self.invoice_id:
-            qs = InvoiceContrato.objects.filter(invoice_id=self.invoice_id)
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-            if qs.exists():
-                raise ValidationError('Este invoice já possui um contrato vinculado.')
 
-    def save(self, *args, **kwargs):
-        if self.invoice_id:
-            self.valor = self.invoice.valor_total
-        super().save(*args, **kwargs)
+class MessageQueue(models.Model):
+    """
+    Fila de mensagens para cobrança e confirmação de pagamento.
+    """
+    TIPO_CHOICES = [
+        ('5_dias', '5 dias antes'),
+        ('2_dias', '2 dias antes'),
+        ('no_dia', 'No dia'),
+        ('confirmacao', 'Confirmação'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pendente', 'Pendente'),
+        ('enviado', 'Enviado'),
+        ('erro', 'Erro'),
+    ]
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.PROTECT,
+        related_name='mensagens'
+    )
+    telefone = models.CharField(max_length=20, blank=True, null=True)
+    mensagem = models.TextField()
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    agendado_para = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pendente')
+    tentativas = models.PositiveSmallIntegerField(default=0)
+    enviado_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Fila de Mensagens'
+        verbose_name_plural = 'Fila de Mensagens'
+        ordering = ['agendado_para']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['invoice', 'tipo'],
+                name='unique_messagequeue_invoice_tipo'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['status', 'agendado_para'], name='msgqueue_status_agendado_idx'),
+            models.Index(fields=['invoice'], name='msgqueue_invoice_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} - Invoice {self.invoice_id} ({self.get_status_display()})"
