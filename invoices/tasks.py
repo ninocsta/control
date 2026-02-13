@@ -12,6 +12,7 @@ from invoices.services.invoice_service import gerar_invoices_mensais
 from invoices.services.infinitepay_service import InfinitePayService
 from invoices.services.message_queue_service import (
     agendar_mensagens_cobranca,
+    agendar_mensagens_atraso,
     registrar_falha_envio,
     marcar_mensagem_enviada,
 )
@@ -133,7 +134,7 @@ def task_agendar_mensagens_cobranca(self):
 
 
 @shared_task(bind=True, max_retries=3)
-def task_processar_fila_waha(self, limite=100):
+def task_processar_fila_waha(self, limite=1):
     """
     Processa a fila de mensagens pendentes e envia via WAHA.
 
@@ -169,6 +170,29 @@ def task_processar_fila_waha(self, limite=100):
         'enviadas': enviados,
         'falhas': falhas,
     }
+
+
+@shared_task(bind=True, max_retries=3)
+def task_agendar_mensagens_atraso(self):
+    """
+    Agenda mensagens de atraso a cada 3 dias apos o vencimento.
+
+    Executar: Diariamente.
+    """
+    hoje = timezone.localdate()
+    invoices_atrasadas = Invoice.objects.filter(
+        vencimento__lt=hoje,
+        status__in=['pendente', 'atrasado'],
+    ).select_related('cliente')
+
+    resultado = agendar_mensagens_atraso(invoices_atrasadas, hoje=hoje)
+
+    logger.info(
+        "Mensagens de atraso: %s criadas, %s ignoradas",
+        resultado['criados'],
+        resultado['ignorados'],
+    )
+    return resultado
 
 
 @shared_task(bind=True, max_retries=3)

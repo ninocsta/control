@@ -12,8 +12,7 @@ from datetime import date, timedelta
 from django.db.models import Sum, Avg, Count, Q, F
 from django.utils import timezone
 
-from infra.financeiro.models import PeriodoFinanceiro, ContratoSnapshot
-from contratos.models import Contrato
+from infra.financeiro.models import PeriodoFinanceiro, ContratoSnapshot, DespesaAdicional
 from invoices.models import Invoice
 from infra.dominios.models import DomainCost
 from infra.vps.models import VPSCost
@@ -101,17 +100,18 @@ class DashboardService:
     
     def _calcular_previsao_mes_atual(self):
         """
-        Calcula previsão do mês atual usando contratos e custos ativos.
+        Calcula previsão do mês atual usando invoices e custos ativos.
         NÃO cria snapshots, apenas simulação.
         """
-        # Contratos ativos no mês atual
-        contratos_ativos = Contrato.objects.filter(
-            data_inicio__lte=self.primeiro_dia_mes_atual
-        ).filter(
-            Q(data_fim__isnull=True) | Q(data_fim__gte=self.primeiro_dia_mes_atual)
+        # Invoices do mês atual (receita real planejada)
+        receita = (
+            Invoice.objects.filter(
+                mes_referencia=self.primeiro_dia_mes_atual.month,
+                ano_referencia=self.primeiro_dia_mes_atual.year
+            ).exclude(
+                status='cancelado'
+            ).aggregate(total=Sum('valor_total'))['total'] or Decimal('0.00')
         )
-        
-        receita = sum(c.valor_mensal for c in contratos_ativos)
         
         # Custos ativos (soma de todas as categorias)
         despesa = Decimal('0.00')
@@ -120,9 +120,13 @@ class DashboardService:
         despesa += self._somar_custos_ativos(HostingCost)
         despesa += self._somar_custos_ativos(DomainEmailCost)
         despesa += self._somar_custos_ativos(VPSBackupCost)
+        despesa += (
+            DespesaAdicional.objects.filter(
+                mes_referencia=self.primeiro_dia_mes_atual.month,
+                ano_referencia=self.primeiro_dia_mes_atual.year,
+            ).aggregate(total=Sum('valor'))['total'] or Decimal('0.00')
+        )
 
-        print(f"Previsão mês atual - Receita: {receita}, Despesa: {despesa}")
-        
         lucro = receita - despesa
         margem_pct = (lucro / receita * 100) if receita > 0 else Decimal('0.00')
         

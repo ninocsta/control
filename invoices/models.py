@@ -130,6 +130,7 @@ class MessageQueue(models.Model):
         ('5_dias', '5 dias antes'),
         ('2_dias', '2 dias antes'),
         ('no_dia', 'No dia'),
+        ('atraso', 'Atraso'),
         ('confirmacao', 'Confirmação'),
     ]
 
