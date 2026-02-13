@@ -13,7 +13,8 @@ from django.db.models import Sum, Avg, Count, Q, F
 from django.utils import timezone
 
 from infra.financeiro.models import PeriodoFinanceiro, ContratoSnapshot, DespesaAdicional
-from invoices.models import Invoice
+from contratos.models import Contrato
+from invoices.models import Invoice, MessageQueue
 from infra.dominios.models import DomainCost
 from infra.vps.models import VPSCost
 from infra.hosting.models import HostingCost
@@ -46,8 +47,30 @@ class DashboardService:
             fechado=True
         ).order_by('-ano', '-mes').first()
         
+        # Previsão do mês atual (NÃO usar snapshots)
+        previsao = self._calcular_previsao_mes_atual()
+
+        # Receita emitida e paga do mês atual
+        mes_atual = self.hoje.month
+        ano_atual = self.hoje.year
+        invoices_mes_atual = Invoice.objects.filter(
+            mes_referencia=mes_atual,
+            ano_referencia=ano_atual
+        ).exclude(status='cancelado')
+
+        receita_emitida_mes_atual = invoices_mes_atual.aggregate(
+            total=Sum('valor_total')
+        )['total'] or Decimal('0.00')
+        receita_paga_mes_atual = invoices_mes_atual.filter(status='pago').aggregate(
+            total=Sum('valor_total')
+        )['total'] or Decimal('0.00')
+
         if not ultimo_periodo:
-            return self._cards_vazios()
+            return self._cards_vazios(
+                previsao=previsao,
+                receita_emitida_mes_atual=receita_emitida_mes_atual,
+                receita_paga_mes_atual=receita_paga_mes_atual,
+            )
         
         # Dados do último período fechado
         snapshots = ContratoSnapshot.objects.filter(
@@ -65,9 +88,6 @@ class DashboardService:
         else:
             margem_pct = None
         
-        # Previsão do mês atual (NÃO usar snapshots)
-        previsao = self._calcular_previsao_mes_atual()
-        
         return {
             'ultimo_periodo': {
                 'mes': ultimo_periodo.mes,
@@ -78,33 +98,50 @@ class DashboardService:
             'despesa_total': despesa_total,
             'lucro_total': lucro_total,
             'margem_pct': margem_pct,
-            'previsao_receita': previsao['receita'],
+            'previsao_receita': previsao['receita_invoices'],
+            'previsao_receita_contratos': previsao['receita_contratos'],
             'previsao_despesa': previsao['despesa'],
-            'previsao_lucro': previsao['lucro'],
-            'previsao_margem_pct': previsao['margem_pct'],
+            'previsao_lucro': previsao['lucro_invoices'],
+            'previsao_margem_pct': previsao['margem_pct_invoices'],
+            'receita_emitida_mes_atual': receita_emitida_mes_atual,
+            'receita_paga_mes_atual': receita_paga_mes_atual,
         }
     
-    def _cards_vazios(self):
+    def _cards_vazios(self, previsao=None, receita_emitida_mes_atual=None, receita_paga_mes_atual=None):
         """Retorna estrutura vazia quando não há dados."""
+        previsao = previsao or {
+            'receita_invoices': Decimal('0.00'),
+            'receita_contratos': Decimal('0.00'),
+            'despesa': Decimal('0.00'),
+            'lucro_invoices': Decimal('0.00'),
+            'margem_pct_invoices': Decimal('0.00'),
+            'lucro_contratos': Decimal('0.00'),
+            'margem_pct_contratos': Decimal('0.00'),
+        }
+        receita_emitida_mes_atual = receita_emitida_mes_atual or Decimal('0.00')
+        receita_paga_mes_atual = receita_paga_mes_atual or Decimal('0.00')
         return {
             'ultimo_periodo': None,
             'receita_total': Decimal('0.00'),
             'despesa_total': Decimal('0.00'),
             'lucro_total': Decimal('0.00'),
             'margem_pct': Decimal('0.00'),
-            'previsao_receita': Decimal('0.00'),
-            'previsao_despesa': Decimal('0.00'),
-            'previsao_lucro': Decimal('0.00'),
-            'previsao_margem_pct': Decimal('0.00'),
+            'previsao_receita': previsao['receita_invoices'],
+            'previsao_receita_contratos': previsao['receita_contratos'],
+            'previsao_despesa': previsao['despesa'],
+            'previsao_lucro': previsao['lucro_invoices'],
+            'previsao_margem_pct': previsao['margem_pct_invoices'],
+            'receita_emitida_mes_atual': receita_emitida_mes_atual,
+            'receita_paga_mes_atual': receita_paga_mes_atual,
         }
     
     def _calcular_previsao_mes_atual(self):
         """
-        Calcula previsão do mês atual usando invoices e custos ativos.
+        Calcula previsão do mês atual usando invoices e contratos (comparativo).
         NÃO cria snapshots, apenas simulação.
         """
-        # Invoices do mês atual (receita real planejada)
-        receita = (
+        # Invoices do mês atual (receita planejada)
+        receita_invoices = (
             Invoice.objects.filter(
                 mes_referencia=self.primeiro_dia_mes_atual.month,
                 ano_referencia=self.primeiro_dia_mes_atual.year
@@ -112,6 +149,14 @@ class DashboardService:
                 status='cancelado'
             ).aggregate(total=Sum('valor_total'))['total'] or Decimal('0.00')
         )
+
+        # Contratos ativos no mês atual (previsão alternativa)
+        contratos_ativos = Contrato.objects.filter(
+            data_inicio__lte=self.primeiro_dia_mes_atual
+        ).filter(
+            Q(data_fim__isnull=True) | Q(data_fim__gte=self.primeiro_dia_mes_atual)
+        )
+        receita_contratos = sum(c.valor_mensal for c in contratos_ativos)
         
         # Custos ativos (soma de todas as categorias)
         despesa = Decimal('0.00')
@@ -127,14 +172,20 @@ class DashboardService:
             ).aggregate(total=Sum('valor'))['total'] or Decimal('0.00')
         )
 
-        lucro = receita - despesa
-        margem_pct = (lucro / receita * 100) if receita > 0 else Decimal('0.00')
+        lucro_invoices = receita_invoices - despesa
+        margem_pct_invoices = (lucro_invoices / receita_invoices * 100) if receita_invoices > 0 else Decimal('0.00')
+
+        lucro_contratos = receita_contratos - despesa
+        margem_pct_contratos = (lucro_contratos / receita_contratos * 100) if receita_contratos > 0 else Decimal('0.00')
         
         return {
-            'receita': receita,
+            'receita_invoices': receita_invoices,
+            'receita_contratos': receita_contratos,
             'despesa': despesa,
-            'lucro': lucro,
-            'margem_pct': margem_pct
+            'lucro_invoices': lucro_invoices,
+            'margem_pct_invoices': margem_pct_invoices,
+            'lucro_contratos': lucro_contratos,
+            'margem_pct_contratos': margem_pct_contratos,
         }
     
     def _somar_custos_ativos(self, model_class):
@@ -507,6 +558,7 @@ class DashboardService:
         total_mes_atual = invoices_mes_atual.aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
         pagos_mes_atual = invoices_mes_atual.filter(status='pago').aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
         pendentes_mes_atual = invoices_mes_atual.filter(status='pendente').aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
+        atrasados_mes_atual = invoices_mes_atual.filter(status='atrasado').aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
         
         # Calcular totais atrasados
         total_atrasados = invoices_atrasados.aggregate(Sum('valor_total'))['valor_total__sum'] or Decimal('0.00')
@@ -518,9 +570,11 @@ class DashboardService:
                 'total': total_mes_atual,
                 'pago': pagos_mes_atual,
                 'pendente': pendentes_mes_atual,
+                'atrasado': atrasados_mes_atual,
                 'qtd_total': invoices_mes_atual.count(),
                 'qtd_pagos': invoices_mes_atual.filter(status='pago').count(),
                 'qtd_pendentes': invoices_mes_atual.filter(status='pendente').count(),
+                'qtd_atrasados': invoices_mes_atual.filter(status='atrasado').count(),
                 'invoices': [{
                     'id': inv.id,
                     'cliente': inv.cliente.nome,
@@ -593,15 +647,121 @@ class DashboardService:
                 'valor': snapshots.aggregate(Sum('custo_emails'))['custo_emails__sum'] or Decimal('0.00'),
                 'cor': '#1abc9c'
             },
+            {
+                'nome': 'Despesas Adicionais',
+                'valor': snapshots.aggregate(Sum('custo_despesas_adicionais'))['custo_despesas_adicionais__sum'] or Decimal('0.00'),
+                'cor': '#6c757d'
+            },
         ]
         
         for categoria in categorias:
-            categoria['percentual'] = (categoria['valor'] / total_custo * 100)
+            categoria['percentual'] = (categoria['valor'] / total_custo * 100) if total_custo > 0 else Decimal('0.00')
         
         # Ordenar por valor (decrescente)
         categorias.sort(key=lambda x: x['valor'], reverse=True)
         
         return categorias
+
+    def get_alertas_anomalia(self):
+        """
+        Retorna alertas para possiveis anomalias operacionais.
+        """
+        mes_atual = self.hoje.month
+        ano_atual = self.hoje.year
+
+        alertas = []
+
+        invoices_sem_checkout = Invoice.objects.filter(
+            mes_referencia=mes_atual,
+            ano_referencia=ano_atual,
+            status__in=['pendente', 'atrasado']
+        ).filter(
+            Q(checkout_url='') | Q(checkout_url__isnull=True)
+        ).count()
+        if invoices_sem_checkout:
+            alertas.append({
+                'titulo': 'Invoices sem checkout',
+                'descricao': f'{invoices_sem_checkout} invoice(s) pendente/atrasado sem link de checkout.',
+                'nivel': 'alto',
+                'cor': '#dc3545',
+            })
+
+        invoices_sem_vinculo = Invoice.objects.filter(
+            mes_referencia=mes_atual,
+            ano_referencia=ano_atual,
+            itens_contrato__isnull=True
+        ).count()
+        if invoices_sem_vinculo:
+            alertas.append({
+                'titulo': 'Invoices sem vínculo',
+                'descricao': f'{invoices_sem_vinculo} invoice(s) do mês sem vínculo de contrato.',
+                'nivel': 'medio',
+                'cor': '#ffc107',
+            })
+
+        invoices_sem_telefone = Invoice.objects.filter(
+            mes_referencia=mes_atual,
+            ano_referencia=ano_atual,
+            status__in=['pendente', 'atrasado']
+        ).filter(
+            Q(cliente__telefone__isnull=True) | Q(cliente__telefone='')
+        ).count()
+        if invoices_sem_telefone:
+            alertas.append({
+                'titulo': 'Clientes sem telefone',
+                'descricao': f'{invoices_sem_telefone} invoice(s) sem telefone para envio.',
+                'nivel': 'medio',
+                'cor': '#ffc107',
+            })
+
+        mensagens_pendentes = MessageQueue.objects.filter(
+            status='pendente',
+            agendado_para__lt=timezone.now() - timedelta(hours=12)
+        ).count()
+        if mensagens_pendentes:
+            alertas.append({
+                'titulo': 'Fila de mensagens atrasada',
+                'descricao': f'{mensagens_pendentes} mensagem(ns) pendente(s) ha mais de 12h.',
+                'nivel': 'alto',
+                'cor': '#dc3545',
+            })
+
+        return alertas
+
+    def get_receita_mes_atual_chart_data(self):
+        """
+        Dados para grafico de receita do mes atual.
+        """
+        previsao = self._calcular_previsao_mes_atual()
+        mes_atual = self.hoje.month
+        ano_atual = self.hoje.year
+        invoices_mes_atual = Invoice.objects.filter(
+            mes_referencia=mes_atual,
+            ano_referencia=ano_atual
+        ).exclude(status='cancelado')
+
+        receita_emitida = invoices_mes_atual.aggregate(total=Sum('valor_total'))['total'] or Decimal('0.00')
+        receita_paga = invoices_mes_atual.filter(status='pago').aggregate(total=Sum('valor_total'))['total'] or Decimal('0.00')
+
+        return {
+            'labels': ['Prev. Contratos', 'Emitida (Invoices)', 'Paga'],
+            'values': [
+                float(previsao['receita_contratos']),
+                float(receita_emitida),
+                float(receita_paga),
+            ],
+        }
+
+    def get_custos_categoria_chart_data(self):
+        """
+        Dados para grafico de custos por categoria.
+        """
+        categorias = self.get_custos_por_categoria()
+        return {
+            'labels': [c['nome'] for c in categorias],
+            'values': [float(c['valor']) for c in categorias],
+            'colors': [c['cor'] for c in categorias],
+        }
     
     # ========================================
     # 5️⃣ CUSTOS POR CLIENTE

@@ -37,6 +37,13 @@ def dashboard_financeiro(request):
         # Evolução mensal (gráfico)
         'evolucao_mensal': service.get_evolucao_mensal(meses=12),
         'evolucao_chart': service.get_evolucao_chart_data(meses=12),
+
+        # Alertas de anomalia
+        'alertas_anomalia': service.get_alertas_anomalia(),
+
+        # Gráficos auxiliares
+        'receita_chart': service.get_receita_mes_atual_chart_data(),
+        'custos_categoria_chart': service.get_custos_categoria_chart_data(),
     }
     
     return render(request, 'admin/financeiro/dashboard.html', context)

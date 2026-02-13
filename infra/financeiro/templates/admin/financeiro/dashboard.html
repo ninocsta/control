@@ -233,6 +233,8 @@
 
 {% block content %}
 {{ evolucao_chart|json_script:"evolucao-chart-data" }}
+{{ receita_chart|json_script:"receita-chart-data" }}
+{{ custos_categoria_chart|json_script:"custos-categoria-chart-data" }}
 <div class="dashboard-container">
     <div class="dashboard-header">
         <h1>📊 Dashboard Financeiro e Operacional</h1>
@@ -275,12 +277,26 @@
             <p class="card-value">{{ cards.margem_pct|margem_format|safe }}</p>
             <p class="card-subtitle">Último período fechado</p>
         </div>
+
+        <!-- Receita Emitida (Mês Atual) -->
+        <div class="card card-blue">
+            <h3 class="card-title">Receita Emitida</h3>
+            <p class="card-value">R$ {{ cards.receita_emitida_mes_atual|floatformat:2 }}</p>
+            <p class="card-subtitle">Invoices do mês atual</p>
+        </div>
+
+        <!-- Receita Paga (Mês Atual) -->
+        <div class="card card-green">
+            <h3 class="card-title">Receita Paga</h3>
+            <p class="card-value">R$ {{ cards.receita_paga_mes_atual|floatformat:2 }}</p>
+            <p class="card-subtitle">Invoices pagas no mês</p>
+        </div>
         
         <!-- Receita Prevista (Mês Atual) -->
         <div class="card card-teal">
-            <h3 class="card-title">Receita Prevista</h3>
+            <h3 class="card-title">Receita Prevista (Invoices)</h3>
             <p class="card-value">R$ {{ cards.previsao_receita|floatformat:2 }}</p>
-            <p class="card-subtitle">Previsão mês atual</p>
+            <p class="card-subtitle">Contratos: R$ {{ cards.previsao_receita_contratos|floatformat:2 }}</p>
         </div>
         
         <!-- Lucro Previsto (Mês Atual) -->
@@ -288,6 +304,33 @@
             <h3 class="card-title">Lucro Previsto</h3>
             <p class="card-value">R$ {{ cards.previsao_lucro|floatformat:2 }}</p>
             <p class="card-subtitle">Previsão mês atual</p>
+        </div>
+    </div>
+
+    <!-- ALERTAS DE ANOMALIA -->
+    <div class="section">
+        <h2 class="section-title">🚨 Alertas de Anomalia</h2>
+        {% if alertas_anomalia %}
+        <div class="cards-grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+            {% for alerta in alertas_anomalia %}
+            <div class="card" style="border-left-color: {{ alerta.cor }};">
+                <h3 class="card-title">{{ alerta.titulo }}</h3>
+                <p class="card-subtitle" style="font-size: 13px; color: #555;">{{ alerta.descricao }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <p>✅ Nenhuma anomalia detectada</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- RECEITA MÊS ATUAL (GRÁFICO) -->
+    <div class="section">
+        <h2 class="section-title">📊 Receita do Mês Atual (Emitida x Paga x Prevista)</h2>
+        <div style="height: 260px;">
+            <canvas id="receitaMesChart"></canvas>
         </div>
     </div>
     
@@ -316,6 +359,14 @@
                 <p class="card-value">R$ {{ invoices_status.mes_atual.pendente|floatformat:2 }}</p>
                 <p class="card-subtitle">{{ invoices_status.mes_atual.qtd_pendentes }} invoice(s)</p>
             </div>
+
+            {% if invoices_status.mes_atual.qtd_atrasados > 0 %}
+            <div class="card card-red">
+                <h3 class="card-title">Atrasados (Mês Atual)</h3>
+                <p class="card-value">R$ {{ invoices_status.mes_atual.atrasado|floatformat:2 }}</p>
+                <p class="card-subtitle">{{ invoices_status.mes_atual.qtd_atrasados }} invoice(s)</p>
+            </div>
+            {% endif %}
             
             <!-- Invoices Atrasados -->
             {% if invoices_status.atrasados.qtd > 0 %}
@@ -519,7 +570,11 @@
         <!-- CUSTOS POR CATEGORIA -->
         <div class="section">
             <h2 class="section-title">📦 Custos por Categoria</h2>
-            
+
+            <div style="height: 240px; margin-bottom: 15px;">
+                <canvas id="custosCategoriaChart"></canvas>
+            </div>
+
             {% if custos_categorias %}
             <table class="table">
                 <thead>
@@ -689,6 +744,100 @@
                                     label: function(context) {
                                         const value = context.raw || 0;
                                         return `${context.dataset.label}: R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            })();
+        </script>
+
+        <script>
+            (function() {
+                const dataEl = document.getElementById('receita-chart-data');
+                const ctx = document.getElementById('receitaMesChart');
+                if (!dataEl || !ctx) return;
+
+                const chartData = JSON.parse(dataEl.textContent);
+                if (!chartData.labels || !chartData.labels.length) return;
+
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: chartData.labels,
+                        datasets: [{
+                            label: 'Receita',
+                            data: chartData.values,
+                            backgroundColor: [
+                                'rgba(33, 150, 243, 0.6)',
+                                'rgba(40, 167, 69, 0.6)',
+                                'rgba(255, 152, 0, 0.6)'
+                            ],
+                            borderColor: [
+                                'rgba(33, 150, 243, 1)',
+                                'rgba(40, 167, 69, 1)',
+                                'rgba(255, 152, 0, 1)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: (value) => `R$ ${value}`
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const value = context.raw || 0;
+                                        return `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+                                    }
+                                }
+                            },
+                            legend: { display: false }
+                        }
+                    }
+                });
+            })();
+        </script>
+
+        <script>
+            (function() {
+                const dataEl = document.getElementById('custos-categoria-chart-data');
+                const ctx = document.getElementById('custosCategoriaChart');
+                if (!dataEl || !ctx) return;
+
+                const chartData = JSON.parse(dataEl.textContent);
+                if (!chartData.labels || !chartData.labels.length) return;
+
+                new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: chartData.labels,
+                        datasets: [{
+                            data: chartData.values,
+                            backgroundColor: chartData.colors,
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'bottom' },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const value = context.raw || 0;
+                                        return `${context.label}: R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
                                     }
                                 }
                             }
