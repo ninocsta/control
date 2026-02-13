@@ -111,6 +111,8 @@ def invoice_checkout_redirect(request, ref):
     invoice = Invoice.objects.filter(invoice_slug=ref).first()
     if not invoice:
         invoice = Invoice.objects.filter(order_nsu=ref).first()
+    if not invoice and ref.isdigit():
+        invoice = Invoice.objects.filter(id=int(ref)).first()
     if not invoice or not invoice.checkout_url:
         return HttpResponse(status=404)
     return redirect(invoice.checkout_url)
