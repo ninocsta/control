@@ -726,6 +726,20 @@ class DashboardService:
                 'cor': '#dc3545',
             })
 
+        mensagens_sem_checkout = MessageQueue.objects.filter(
+            status='pendente',
+            tipo__in=['5_dias', '2_dias', 'no_dia', 'atraso']
+        ).filter(
+            Q(invoice__checkout_url__isnull=True) | Q(invoice__checkout_url='')
+        ).count()
+        if mensagens_sem_checkout:
+            alertas.append({
+                'titulo': 'Mensagens sem checkout',
+                'descricao': f'{mensagens_sem_checkout} mensagem(ns) pendente(s) sem checkout vinculado.',
+                'nivel': 'alto',
+                'cor': '#dc3545',
+            })
+
         return alertas
 
     def get_receita_mes_atual_chart_data(self):

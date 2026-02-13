@@ -141,10 +141,18 @@ def task_processar_fila_waha(self, limite=1):
     Executar: A cada hora.
     """
     agora = timezone.now()
+    tipos_cobranca = ['5_dias', '2_dias', 'no_dia', 'atraso']
     mensagens = MessageQueue.objects.filter(
         status='pendente',
         agendado_para__lte=agora
-    ).order_by('agendado_para')[:limite]
+    ).filter(
+        models.Q(tipo='confirmacao') |
+        (
+            models.Q(tipo__in=tipos_cobranca) &
+            models.Q(invoice__checkout_url__isnull=False) &
+            ~models.Q(invoice__checkout_url='')
+        )
+    ).select_related('invoice').order_by('agendado_para')[:limite]
 
     service = WahaService()
     enviados = 0
