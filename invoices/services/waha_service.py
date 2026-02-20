@@ -56,6 +56,9 @@ class WahaService:
         if not digits:
             raise ValueError(f'Telefone invalido: {telefone!r}')
 
+        if not digits.startswith('55'):
+            digits = f'55{digits}'
+
         if not self.base_url:
             raise ValueError('WAHA nao configurado (WAHA_BASE_URL ausente)')
 
