@@ -16,7 +16,7 @@ from invoices.services.message_queue_service import (
     registrar_falha_envio,
     marcar_mensagem_enviada,
 )
-from invoices.services.waha_service import WahaService
+from invoices.services.waha_service import WahaService, ContactNotFoundError
 logger = logging.getLogger(__name__)
 
 
@@ -164,6 +164,10 @@ def task_enviar_confirmacao_imediata(self, messagequeue_id):
         WahaService().send_message(mensagem.telefone, mensagem.mensagem)
         marcar_mensagem_enviada(mensagem)
         logger.info('Confirmacao %s enviada com sucesso', messagequeue_id)
+    except ContactNotFoundError as exc:
+        # Numero nao existe no WhatsApp: falha definitiva, sem retry
+        logger.error('Confirmacao %s: numero nao encontrado no WhatsApp (%s)', messagequeue_id, exc)
+        registrar_falha_envio(mensagem, max_tentativas=1)
     except Exception as exc:
         logger.warning('Falha ao enviar confirmacao %s (tentativa %s): %s', messagequeue_id, self.request.retries + 1, exc)
         registrar_falha_envio(mensagem)
@@ -205,6 +209,11 @@ def task_processar_fila_waha(self, limite=1):
             service.send_message(mensagem.telefone, mensagem.mensagem)
             marcar_mensagem_enviada(mensagem)
             enviados += 1
+        except ContactNotFoundError as exc:
+            # Numero nao existe no WhatsApp: falha definitiva, sem retry
+            logger.error('Mensagem %s: numero nao encontrado no WhatsApp (%s)', mensagem.id, exc)
+            registrar_falha_envio(mensagem, max_tentativas=1)
+            falhas += 1
         except Exception as exc:
             logger.error('Falha ao enviar mensagem %s: %s', mensagem.id, exc)
             registrar_falha_envio(mensagem)

@@ -1,7 +1,11 @@
 import os
 import re
 
-from .http_client import post_json
+from .http_client import get_json, post_json
+
+
+class ContactNotFoundError(Exception):
+    """Numero de telefone nao encontrado no WhatsApp."""
 
 
 class WahaService:
@@ -35,37 +39,47 @@ class WahaService:
             headers['X-Api-Key'] = self.api_key
         return headers
 
-    def _normalize_chat_id(self, telefone):
+    def _resolve_chat_id(self, telefone: str) -> str:
+        """
+        Valida o numero via /api/contacts/check-exists e retorna o chatId
+        exato fornecido pela API do WAHA.
+
+        Raises:
+            ValueError: se o telefone estiver vazio ou sem digitos.
+            ContactNotFoundError: se numberExists for False.
+            RuntimeError: se a chamada HTTP falhar.
+        """
         if not telefone:
-            return None
-        telefone = telefone.strip()
-        if '@c.us' in telefone or '@g.us' in telefone:
-            return telefone
+            raise ValueError('Telefone nao informado')
 
         digits = re.sub(r'\D', '', telefone)
+        if not digits:
+            raise ValueError(f'Telefone invalido: {telefone!r}')
 
-        # Remove o prefixo do pais (55) se presente
-        if digits.startswith('55'):
-            local = digits[2:]
-        else:
-            local = digits
+        if not self.base_url:
+            raise ValueError('WAHA nao configurado (WAHA_BASE_URL ausente)')
 
-        # local deve ter:
-        #   11 digitos: DDD (2) + 9 + numero (8) → celular ja com o 9, manter
-        #   10 digitos: DDD (2) + numero (8) → fixo ou celular sem o 9
-        #     se o 1o digito do numero for 6-9, e celular → adicionar o 9
-        #     se o 1o digito for 2-5, e fixo → manter sem o 9
-        if len(local) == 10:
-            primeiro_digito = local[2]
-            if primeiro_digito in ('6', '7', '8', '9'):
-                local = local[:2] + '9' + local[2:]
+        url = f"{self.base_url}/api/contacts/check-exists"
+        params = {'phone': digits, 'session': self.session}
 
-        return f"55{local}@c.us"
+        # Apenas X-Api-Key / Authorization — sem Content-Type em GETs
+        headers = {k: v for k, v in self._build_headers().items() if k != 'Content-Type'}
 
-    def send_message(self, telefone, mensagem):
-        chat_id = self._normalize_chat_id(telefone)
+        data = get_json(url, params=params, headers=headers, timeout=self.timeout)
+
+        if not data.get('numberExists'):
+            raise ContactNotFoundError(
+                f'Numero {digits} nao encontrado no WhatsApp (numberExists=false)'
+            )
+
+        chat_id = data.get('chatId')
         if not chat_id:
-            raise ValueError('Telefone invalido para envio')
+            raise RuntimeError(f'WAHA retornou numberExists=true mas chatId ausente: {data}')
+
+        return chat_id
+
+    def send_message(self, telefone: str, mensagem: str) -> dict:
+        chat_id = self._resolve_chat_id(telefone)
 
         url = self._resolve_url()
         payload = {
