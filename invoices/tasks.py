@@ -17,7 +17,6 @@ from invoices.services.message_queue_service import (
     marcar_mensagem_enviada,
 )
 from invoices.services.waha_service import WahaService
-
 logger = logging.getLogger(__name__)
 
 
@@ -131,6 +130,44 @@ def task_agendar_mensagens_cobranca(self):
         resultado['ignorados'],
     )
     return resultado
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_enviar_confirmacao_imediata(self, messagequeue_id):
+    """
+    Envia imediatamente a mensagem de confirmacao de pagamento via WAHA.
+
+    Disparada pelo webhook da InfinitePay logo apos registrar o pagamento.
+    Faz ate 3 tentativas com 30s de intervalo.
+    Caso todas falhem, o registro permanece na fila com status 'erro' e
+    o task_processar_fila_waha horario tenta novamente como fallback.
+    """
+    try:
+        mensagem = MessageQueue.objects.select_related('invoice', 'invoice__cliente').get(
+            pk=messagequeue_id,
+            tipo='confirmacao',
+        )
+    except MessageQueue.DoesNotExist:
+        logger.error('task_enviar_confirmacao_imediata: MessageQueue %s nao encontrada', messagequeue_id)
+        return
+
+    if mensagem.status == 'enviado':
+        logger.info('Confirmacao %s ja enviada, ignorando', messagequeue_id)
+        return
+
+    if not mensagem.telefone:
+        logger.warning('Confirmacao %s sem telefone, marcando erro', messagequeue_id)
+        registrar_falha_envio(mensagem)
+        return
+
+    try:
+        WahaService().send_message(mensagem.telefone, mensagem.mensagem)
+        marcar_mensagem_enviada(mensagem)
+        logger.info('Confirmacao %s enviada com sucesso', messagequeue_id)
+    except Exception as exc:
+        logger.warning('Falha ao enviar confirmacao %s (tentativa %s): %s', messagequeue_id, self.request.retries + 1, exc)
+        registrar_falha_envio(mensagem)
+        raise self.retry(exc=exc)
 
 
 @shared_task(bind=True, max_retries=3)

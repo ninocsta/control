@@ -25,7 +25,7 @@ class ClienteAdmin(admin.ModelAdmin):
             'fields': ('tipo',)
         }),
         ('Cobrança', {
-            'fields': ('vencimento_padrao',)
+            'fields': ('vencimento_padrao', 'descricao_cobranca')
         }),
         ('Status', {
             'fields': ('ativo',)

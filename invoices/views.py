@@ -9,6 +9,7 @@ from django.db import transaction
 
 from invoices.models import Invoice
 from invoices.services.message_queue_service import criar_mensagem_confirmacao
+from invoices.tasks import task_enviar_confirmacao_imediata
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,9 @@ def infinitepay_webhook(request):
             if updated_fields:
                 invoice.save(update_fields=updated_fields)
 
-            criar_mensagem_confirmacao(invoice)
+            mensagem, created = criar_mensagem_confirmacao(invoice)
+            if mensagem:
+                task_enviar_confirmacao_imediata.delay(mensagem.id)
 
     except Invoice.DoesNotExist:
         return HttpResponse(status=404)

@@ -49,7 +49,7 @@ class InfinitePayService:
                 {
                     'quantity': 1,
                     'price': amount_cents,
-                    'description': self.description,
+                    'description': invoice.descricao_efetiva,
                 }
             ],
             'order_nsu': str(invoice.id),

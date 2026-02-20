@@ -41,6 +41,17 @@ class Invoice(models.Model):
         validators=[MinValueValidator(Decimal('0.00'))]
     )
     
+    # Descrição do serviço cobrado
+    descricao = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text=(
+            'Descrição específica desta cobrança (ex: "Desenvolvimento de feature X"). '
+            'Quando preenchida, substitui a descrição padrão do cliente nas mensagens e no checkout. '
+            'Deixe em branco para usar a descrição padrão do cliente.'
+        )
+    )
+
     # Status e vencimento
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pendente')
     vencimento = models.DateField()
@@ -73,6 +84,21 @@ class Invoice(models.Model):
     def __str__(self):
         return f"Invoice {self.cliente.nome} - {self.mes_referencia:02d}/{self.ano_referencia} - R$ {self.valor_total}"
     
+    @property
+    def descricao_efetiva(self) -> str:
+        """
+        Descrição resolvida com fallback em três níveis:
+          1. invoice.descricao  (manual, específico desta cobrança)
+          2. cliente.descricao_cobranca  (padrão do cliente)
+          3. INFINITEPAY_ITEM_DESCRIPTION env var  (padrão do sistema)
+        """
+        import os
+        return (
+            self.descricao.strip()
+            or getattr(self.cliente, 'descricao_cobranca', '').strip()
+            or os.getenv('INFINITEPAY_ITEM_DESCRIPTION', 'Mensalidade de serviços contratados')
+        )
+
     def clean(self):
         if not 1 <= self.mes_referencia <= 12:
             raise ValidationError('Mês deve estar entre 1 e 12')

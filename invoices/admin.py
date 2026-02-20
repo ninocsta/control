@@ -43,7 +43,7 @@ class InvoiceAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Cliente e Período', {
-            'fields': ('cliente', 'mes_referencia', 'ano_referencia')
+            'fields': ('cliente', 'mes_referencia', 'ano_referencia', 'descricao')
         }),
         ('Valores e Status', {
             'fields': ('valor_total', 'vencimento', 'status')

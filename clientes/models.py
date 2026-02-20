@@ -22,6 +22,15 @@ class Cliente(models.Model):
         help_text='Dia padrão de vencimento (1-28)'
     )
 
+    descricao_cobranca = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text=(
+            'Descrição padrão exibida nas mensagens e no checkout de cobrança deste cliente. '
+            'Quando em branco, usa o padrão do sistema.'
+        )
+    )
+
     data_criacao = models.DateTimeField(auto_now_add=True)
     ativo = models.BooleanField(default=True)
 

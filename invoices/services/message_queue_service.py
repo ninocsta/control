@@ -22,15 +22,30 @@ def _build_checkout_link(invoice):
     return invoice.checkout_url or ''
 
 
+def _resolve_descricao_msg(invoice) -> str:
+    """
+    Retorna a descrição personalizada para exibir nas mensagens.
+    Usa somente invoice.descricao ou cliente.descricao_cobranca;
+    o fallback genérico do sistema não é exibido ao usuário.
+    """
+    return (
+        invoice.descricao.strip()
+        or getattr(invoice.cliente, 'descricao_cobranca', '').strip()
+    )
+
+
 def montar_mensagem_cobranca(invoice, tipo):
     periodo = _format_periodo(invoice)
     vencimento = invoice.vencimento.strftime('%d/%m/%Y')
     valor = _format_valor(invoice.valor_total)
     link = _build_checkout_link(invoice)
+    descricao = _resolve_descricao_msg(invoice)
+    linha_descricao = f"📋 *Serviço:* {descricao}\n" if descricao else ""
 
     if tipo == '5_dias':
         base = (
             f"🔔 *Lembrete de Fatura*\n\n"
+            f"{linha_descricao}"
             f"Sua fatura *{periodo}* vence em *{vencimento}*.\n"
             f"💰 *Valor:* {valor}\n\n"
         )
@@ -38,6 +53,7 @@ def montar_mensagem_cobranca(invoice, tipo):
     elif tipo == '2_dias':
         base = (
             f"⏳ *Fatura próxima do vencimento*\n\n"
+            f"{linha_descricao}"
             f"A fatura *{periodo}* vence em *{vencimento}*.\n"
             f"💰 *Valor:* {valor}\n\n"
         )
@@ -45,13 +61,14 @@ def montar_mensagem_cobranca(invoice, tipo):
     else:  # vence hoje
         base = (
             f"⚠️ *Fatura vencendo hoje*\n\n"
+            f"{linha_descricao}"
             f"A fatura *{periodo}* vence *hoje ({vencimento})*.\n"
             f"💰 *Valor:* {valor}\n\n"
         )
 
     if link:
         return (
-            f"{base}\n\n"
+            f"{base}\n"
             f"👉 *Pagar agora:*\n{link}"
         )
     return base
@@ -74,16 +91,19 @@ def montar_mensagem_atraso(invoice):
     vencimento = invoice.vencimento.strftime('%d/%m/%Y')
     valor = _format_valor(invoice.valor_total)
     link = _build_checkout_link(invoice)
+    descricao = _resolve_descricao_msg(invoice)
+    linha_descricao = f"\U0001f4cb *Serviço:* {descricao}\n" if descricao else ""
 
     base = (
-        f"⚠️ *Fatura em atraso*\n\n"
+        f"\u26a0\ufe0f *Fatura em atraso*\n\n"
+        f"{linha_descricao}"
         f"Sua fatura *{periodo}* está em atraso desde *{vencimento}*.\n"
-        f"💰 *Valor:* {valor}\n\n"
+        f"\U0001f4b0 *Valor:* {valor}\n\n"
     )
 
     if link:
         return (
-            f"{base}\n\n"
+            f"{base}\n"
             f"👉 *Pagar agora:*\n{link}"
         )
     return base
