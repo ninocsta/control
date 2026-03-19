@@ -1,0 +1,105 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Serviços | Salão{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+    <div class="col-12 col-lg-5">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title mb-3">
+                    {% if edit_servico %}Editar Serviço #{{ edit_servico.id }}{% else %}Novo Serviço{% endif %}
+                </h5>
+                <form method="post" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    {% if edit_servico %}
+                        <input type="hidden" name="action" value="update_servico">
+                        <input type="hidden" name="servico_id" value="{{ edit_servico.id }}">
+                    {% else %}
+                        <input type="hidden" name="action" value="create_servico">
+                    {% endif %}
+
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Código</label>
+                        <input class="form-control" name="codigo" maxlength="20" required value="{% if edit_servico %}{{ edit_servico.codigo }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-8">
+                        <label class="form-label">Nome</label>
+                        <input class="form-control" name="nome" maxlength="120" required value="{% if edit_servico %}{{ edit_servico.nome }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-5">
+                        <label class="form-label">Valor padrão</label>
+                        <input class="form-control" name="valor_padrao" inputmode="decimal" placeholder="0,00" required value="{% if edit_servico %}{{ edit_servico.valor_padrao }}{% endif %}">
+                    </div>
+                    <div class="col-8 col-md-4">
+                        <label class="form-label">Ordem</label>
+                        <input class="form-control" type="number" name="ordem" min="0" value="{% if edit_servico %}{{ edit_servico.ordem }}{% else %}0{% endif %}">
+                    </div>
+                    <div class="col-4 col-md-3">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" name="ativo" id="id_ativo_servico" {% if edit_servico %}{% if edit_servico.ativo %}checked{% endif %}{% else %}checked{% endif %}>
+                            <label class="form-check-label" for="id_ativo_servico">Ativo</label>
+                        </div>
+                    </div>
+                    <div class="col-12 d-grid">
+                        <button class="btn btn-primary" type="submit">
+                            {% if edit_servico %}Salvar serviço{% else %}Cadastrar serviço{% endif %}
+                        </button>
+                    </div>
+                    {% if edit_servico %}
+                    <div class="col-12 d-grid">
+                        <a class="btn btn-outline-secondary" href="{% url 'salao:servicos' %}">Cancelar edição</a>
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Serviços cadastrados</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Nome</th>
+                                <th class="text-end">Valor padrão</th>
+                                <th class="text-center">Status</th>
+                                <th class="text-center">Ordem</th>
+                                <th class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for servico in servicos %}
+                            <tr>
+                                <td>{{ servico.codigo }}</td>
+                                <td>{{ servico.nome }}</td>
+                                <td class="text-end">R$ {{ servico.valor_padrao|floatformat:2 }}</td>
+                                <td class="text-center">
+                                    {% if servico.ativo %}Ativo{% else %}Inativo{% endif %}
+                                </td>
+                                <td class="text-center">{{ servico.ordem }}</td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:servicos' %}?edit={{ servico.id }}">Editar</a>
+                                    <form method="post" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_servico">
+                                        <input type="hidden" name="servico_id" value="{{ servico.id }}">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="6" class="text-center text-muted py-4">Nenhum serviço cadastrado.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

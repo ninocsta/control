@@ -5,6 +5,7 @@ from invoices import views as invoice_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('salao/', include(('salao.urls', 'salao'), namespace='salao')),
     path('financeiro/', include('infra.financeiro.urls')),
     path('p/<str:ref>/', invoice_views.invoice_checkout_redirect, name='invoice_checkout_redirect'),
     path('webhooks/', include('invoices.urls')),

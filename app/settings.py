@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'clientes',
     'contratos',
     'invoices',
+    'salao',
     'infra.dominios',
     'infra.vps',
     'infra.hosting',
@@ -203,7 +204,7 @@ JAZZMIN_SETTINGS = {
     "topmenu_links": [
         {"name": "Início", "url": "admin:index", "permissions": ["auth.view_user"]},
         {"name": "📊 Dashboard", "url": "/financeiro/dashboard/", "permissions": ["auth.view_user"]},
-        {"model": "auth.User"},
+        {"name": "💇 Dashboard Salão", "url": "/salao/dashboard/", "permissions": ["auth.view_user"]},
     ],
 
 }

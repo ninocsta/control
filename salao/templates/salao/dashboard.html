@@ -1,0 +1,400 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Dashboard | Salão{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+    .chart-card canvas { max-height: 320px; }
+    .kpi-badge {
+        display: inline-flex;
+        font-size: .75rem;
+        font-weight: 700;
+        color: #775b67;
+        background: #fde7ee;
+        border-radius: 999px;
+        padding: .22rem .65rem;
+    }
+    .meta-form-card {
+        border: 1px solid #f2d8e1;
+        border-radius: 14px;
+        padding: .8rem;
+        background: #fff9fb;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{{ comparativo_chart|json_script:'comparativo-chart-data' }}
+{{ operacao_chart|json_script:'operacao-chart-data' }}
+{{ atendimentos_dia_chart|json_script:'atendimentos-dia-chart-data' }}
+
+<div class="card card-soft mb-3">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-12 col-lg-7">
+                <form method="get" class="row g-2 align-items-end">
+                    <div class="col-6 col-md-3">
+                        <label class="form-label">Mês</label>
+                        <select class="form-select" name="mes">
+                            {% for value, label in month_options %}
+                                <option value="{{ value }}" {% if mes == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label">Ano</label>
+                        <select class="form-select" name="ano">
+                            {% for year in year_options %}
+                                <option value="{{ year }}" {% if ano == year %}selected{% endif %}>{{ year }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-4 d-grid">
+                        <button class="btn btn-primary" type="submit">Atualizar visão</button>
+                    </div>
+                    <div class="col-12 col-md-2 d-flex align-items-center">
+                        <span class="kpi-badge">Comissão {{ comissao_percentual }}%</span>
+                    </div>
+                </form>
+            </div>
+            <div class="col-12 col-lg-5">
+                <form method="post" class="meta-form-card row g-2 align-items-end">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_meta">
+                    <input type="hidden" name="mes" value="{{ mes }}">
+                    <input type="hidden" name="ano" value="{{ ano }}">
+                    <div class="col-12 col-md-7">
+                        <label class="form-label mb-1">Meta de faturamento (mês)</label>
+                        <input class="form-control" name="meta_faturamento" inputmode="decimal" placeholder="Ex: 8000,00" value="{% if meta_faturamento %}{{ meta_faturamento }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-5 d-grid">
+                        <button class="btn btn-primary" type="submit">Salvar meta</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>Faturamento</h6>
+            <p class="kpi-value">R$ {{ faturamento_bruto|floatformat:2 }}</p>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>Meta Mensal</h6>
+            <p class="kpi-value">
+                {% if meta_faturamento %}R$ {{ meta_faturamento|floatformat:2 }}{% else %}-{% endif %}
+            </p>
+            {% if valor_faltante_meta is not None %}
+                <div class="small text-muted">Faltam R$ {{ valor_faltante_meta|floatformat:2 }}</div>
+            {% endif %}
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>% Meta Atingido</h6>
+            <p class="kpi-value">
+                {% if percentual_meta_atingido is not None %}{{ percentual_meta_atingido|floatformat:2 }}%{% else %}-{% endif %}
+            </p>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>Comissão</h6>
+            <p class="kpi-value">R$ {{ comissao_calculada|floatformat:2 }}</p>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>Após Comissão</h6>
+            <p class="kpi-value">R$ {{ valor_pos_comissao|floatformat:2 }}</p>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>Despesas</h6>
+            <p class="kpi-value">R$ {{ despesas_total|floatformat:2 }}</p>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>Lucro</h6>
+            <p class="kpi-value">R$ {{ lucro|floatformat:2 }}</p>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft kpi-card"><div class="card-body">
+            <h6>Ticket Médio</h6>
+            <p class="kpi-value">R$ {{ ticket_medio|floatformat:2 }}</p>
+            <div class="small text-muted">{{ atendimentos_total }} atendimento(s)</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-12 col-xl-8">
+        <div class="card card-soft chart-card">
+            <div class="card-body">
+                <h5 class="card-title">Comparativo Financeiro (6 meses)</h5>
+                <canvas id="comparativoChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-xl-4">
+        <div class="card card-soft chart-card">
+            <div class="card-body">
+                <h5 class="card-title">Atendimentos x Ticket Médio</h5>
+                <canvas id="operacaoChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-12">
+        <div class="card card-soft chart-card">
+            <div class="card-body">
+                <h5 class="card-title">Atendimentos por Dia ({{ mes }}/{{ ano }})</h5>
+                <canvas id="atendimentosDiaChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-12 col-lg-6">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Serviços Mais Realizados</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Serviço</th>
+                                <th class="text-end">Qtd</th>
+                                <th class="text-end">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in ranking_servicos %}
+                            <tr>
+                                <td>{{ item.servico__codigo }}</td>
+                                <td>{{ item.servico__nome }}</td>
+                                <td class="text-end">{{ item.quantidade }}</td>
+                                <td class="text-end">R$ {{ item.total|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-center text-muted py-4">Sem lançamentos no mês.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Despesas por Categoria</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Categoria</th>
+                                <th class="text-end">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in despesas_por_categoria %}
+                            <tr>
+                                <td>{{ item.categoria__nome }}</td>
+                                <td class="text-end">R$ {{ item.total|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="2" class="text-center text-muted py-4">Sem despesas no mês.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const comparativoNode = document.getElementById('comparativo-chart-data');
+    const operacaoNode = document.getElementById('operacao-chart-data');
+    const atendimentosDiaNode = document.getElementById('atendimentos-dia-chart-data');
+    if (!comparativoNode || !operacaoNode || !atendimentosDiaNode) return;
+
+    const comparativo = JSON.parse(comparativoNode.textContent);
+    const operacao = JSON.parse(operacaoNode.textContent);
+    const atendimentosDia = JSON.parse(atendimentosDiaNode.textContent);
+
+    const moneyTick = (value) => {
+        return 'R$ ' + Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    };
+
+    const comparativoCtx = document.getElementById('comparativoChart');
+    if (comparativoCtx) {
+        new Chart(comparativoCtx, {
+            type: 'line',
+            data: {
+                labels: comparativo.labels,
+                datasets: [
+                    {
+                        label: 'Faturamento',
+                        data: comparativo.faturamento,
+                        borderColor: '#e66d8c',
+                        backgroundColor: 'rgba(230,109,140,0.18)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.35,
+                    },
+                    {
+                        label: 'Despesas',
+                        data: comparativo.despesas,
+                        borderColor: '#f6a04d',
+                        backgroundColor: 'rgba(246,160,77,0.16)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.35,
+                    },
+                    {
+                        label: 'Lucro',
+                        data: comparativo.lucro,
+                        borderColor: '#31b58f',
+                        backgroundColor: 'rgba(49,181,143,0.16)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.35,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' },
+                },
+                scales: {
+                    y: {
+                        ticks: {
+                            callback: (value) => moneyTick(value),
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    const operacaoCtx = document.getElementById('operacaoChart');
+    if (operacaoCtx) {
+        new Chart(operacaoCtx, {
+            data: {
+                labels: operacao.labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Atendimentos',
+                        data: operacao.atendimentos,
+                        backgroundColor: 'rgba(89, 157, 255, 0.75)',
+                        borderRadius: 8,
+                        yAxisID: 'y',
+                    },
+                    {
+                        type: 'line',
+                        label: 'Ticket Médio',
+                        data: operacao.ticket_medio,
+                        borderColor: '#d64d73',
+                        borderWidth: 3,
+                        tension: 0.3,
+                        yAxisID: 'y1',
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' },
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        position: 'left',
+                    },
+                    y1: {
+                        beginAtZero: true,
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: {
+                            callback: (value) => moneyTick(value),
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    const atendimentosDiaCtx = document.getElementById('atendimentosDiaChart');
+    if (atendimentosDiaCtx) {
+        new Chart(atendimentosDiaCtx, {
+            data: {
+                labels: atendimentosDia.labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Qtd Atendimentos',
+                        data: atendimentosDia.atendimentos,
+                        backgroundColor: 'rgba(49, 181, 143, 0.72)',
+                        borderRadius: 8,
+                        yAxisID: 'y',
+                    },
+                    {
+                        type: 'line',
+                        label: 'Faturamento diário',
+                        data: atendimentosDia.faturamento,
+                        borderColor: '#e66d8c',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        yAxisID: 'y1',
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' },
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        position: 'left',
+                    },
+                    y1: {
+                        beginAtZero: true,
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        ticks: {
+                            callback: (value) => moneyTick(value),
+                        },
+                    },
+                },
+            },
+        });
+    }
+})();
+</script>
+{% endblock %}

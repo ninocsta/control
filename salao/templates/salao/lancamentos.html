@@ -1,0 +1,472 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Lançamentos | Salão{% endblock %}
+
+{% block extra_head %}
+<style>
+    .quick-main {
+        background: linear-gradient(160deg, #fff, #fff5f8);
+    }
+
+    .quick-stats {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .65rem;
+    }
+
+    .quick-stat {
+        border: 1px solid #f4d8e0;
+        background: #fff;
+        border-radius: 14px;
+        padding: .7rem .85rem;
+    }
+
+    .quick-stat .label {
+        font-size: .76rem;
+        color: #846f78;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        font-weight: 700;
+    }
+
+    .quick-stat .value {
+        margin-top: .15rem;
+        font-size: 1.05rem;
+        font-weight: 800;
+        color: #402f3a;
+    }
+
+    .kbd-list {
+        margin: 0;
+        padding-left: 1rem;
+        color: #665460;
+        font-size: .89rem;
+    }
+
+    .kbd-list li { margin-bottom: .34rem; }
+
+    .kbd {
+        font-family: "Nunito", sans-serif;
+        font-weight: 800;
+        border: 1px solid #e6cfd7;
+        border-bottom-width: 2px;
+        border-radius: 8px;
+        padding: .05rem .42rem;
+        font-size: .75rem;
+        color: #5f4b56;
+        background: #fff;
+    }
+
+    .catalog-card .table td:first-child {
+        font-weight: 800;
+        letter-spacing: .03em;
+    }
+
+    .sticky-help {
+        position: sticky;
+        top: 12px;
+    }
+
+    @media (max-width: 992px) {
+        .sticky-help { position: static; }
+    }
+
+    @media (max-width: 576px) {
+        .quick-stats {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{{ servicos_catalogo|json_script:'servicos-catalogo-json' }}
+<div class="row g-3">
+    <div class="col-12 col-xl-8">
+        <div class="card card-soft quick-main mb-3">
+            <div class="card-body">
+                <h5 class="card-title">Lançamento Rápido</h5>
+
+                <form method="get" class="row g-2 align-items-end mb-3">
+                    <input type="hidden" id="id_dia_competencia" name="dia" value="{{ dia }}">
+                    <div class="col-6 col-md-3">
+                        <label class="form-label">Mês</label>
+                        <select class="form-select" name="mes">
+                            {% for value, label in month_options %}
+                                <option value="{{ value }}" {% if mes == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label">Ano</label>
+                        <select class="form-select" name="ano">
+                            {% for year in year_options %}
+                                <option value="{{ year }}" {% if ano == year %}selected{% endif %}>{{ year }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-3 d-grid">
+                        <button class="btn btn-primary" type="submit">Trocar competência</button>
+                    </div>
+                    <div class="col-12 col-md-3 d-flex align-items-center justify-content-md-end">
+                        <span class="badge text-bg-light border" id="dia-fixo-label">Dia fixo: {{ dia }}/{{ mes }}/{{ ano }}</span>
+                    </div>
+                </form>
+
+                {% if servicos_ativos %}
+                <form method="post" id="quick-lancamento-form" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create_lancamento">
+                    <input type="hidden" name="mes" value="{{ mes }}">
+                    <input type="hidden" name="ano" value="{{ ano }}">
+
+                    <div class="col-12 col-md-2">
+                        <label class="form-label">Dia</label>
+                        <input class="form-control" id="id_dia" type="number" min="1" max="31" name="dia" value="{{ dia }}" required>
+                    </div>
+                    <div class="col-12 col-md-5">
+                        <label class="form-label">Código do serviço</label>
+                        <input class="form-control" id="id_codigo" name="codigo" autocomplete="off" placeholder="Ex: C01" required>
+                    </div>
+                    <div class="col-12 col-md-3">
+                        <label class="form-label">Valor cobrado</label>
+                        <input class="form-control" id="id_valor" name="valor_cobrado" inputmode="decimal" placeholder="0,00" required>
+                    </div>
+                    <div class="col-12 col-md-2 d-grid">
+                        <button class="btn btn-primary" id="save-button" type="submit">Salvar</button>
+                    </div>
+
+                    <div class="col-12 mt-2">
+                        <div class="small text-muted">Fluxo rápido: <span class="kbd">Enter</span> avança campos e salva no valor.</div>
+                        <div class="small text-muted">No campo código: <span class="kbd">↑</span> dia +1 e <span class="kbd">↓</span> dia -1.</div>
+                        <div class="small mt-1" id="servico-preview"></div>
+                    </div>
+                </form>
+                {% else %}
+                    <div class="alert alert-warning mb-0">Cadastre ao menos um serviço no admin para lançar atendimentos.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if edit_lancamento %}
+        <div class="card card-soft mb-3">
+            <div class="card-body">
+                <h5 class="card-title">Editar lançamento #{{ edit_lancamento.id }}</h5>
+                <form method="post" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_lancamento">
+                    <input type="hidden" name="lancamento_id" value="{{ edit_lancamento.id }}">
+                    <input type="hidden" name="mes" value="{{ mes }}">
+                    <input type="hidden" name="ano" value="{{ ano }}">
+                    <input type="hidden" name="dia" value="{{ dia }}">
+
+                    <div class="col-md-3">
+                        <label class="form-label">Data</label>
+                        <input class="form-control" type="date" name="data" value="{{ edit_lancamento.data|date:'Y-m-d' }}" required>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">Serviço</label>
+                        <select class="form-select" name="servico_id" required>
+                            {% for servico in servicos_ativos %}
+                                <option value="{{ servico.id }}" {% if servico.id == edit_lancamento.servico_id %}selected{% endif %}>
+                                    {{ servico.codigo }} - {{ servico.nome }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Valor</label>
+                        <input class="form-control" name="valor_cobrado" value="{{ edit_lancamento.valor_cobrado }}" required>
+                    </div>
+                    <div class="col-md-2 d-grid">
+                        <button class="btn btn-success" type="submit">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card card-soft mb-3">
+            <div class="card-body">
+                <h5 class="card-title" id="lancamentos-dia-title">Lançamentos do dia {{ dia }}/{{ mes }}/{{ ano }}</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th class="d-none d-md-table-cell">ID</th>
+                                <th>Serviço</th>
+                                <th class="text-end">Valor</th>
+                                <th class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in lancamentos_dia %}
+                            <tr>
+                                <td class="d-none d-md-table-cell">{{ item.id }}</td>
+                                <td>{{ item.servico.codigo }} - {{ item.servico.nome }}</td>
+                                <td class="text-end">R$ {{ item.valor_cobrado|floatformat:2 }}</td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:lancamentos' %}?ano={{ ano }}&mes={{ mes }}&dia={{ dia }}&edit={{ item.id }}">Editar</a>
+                                    <form method="post" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_lancamento">
+                                        <input type="hidden" name="lancamento_id" value="{{ item.id }}">
+                                        <input type="hidden" name="mes" value="{{ mes }}">
+                                        <input type="hidden" name="ano" value="{{ ano }}">
+                                        <input type="hidden" name="dia" value="{{ dia }}">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-center text-muted py-4">Nenhum lançamento no dia.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="col-12 col-xl-4">
+        <div class="sticky-help">
+            <div class="quick-stats mb-3">
+                <div class="quick-stat">
+                    <div class="label">Hoje (Qtd)</div>
+                    <div class="value" id="resumo-dia-qtd">{{ resumo_dia.qtd }}</div>
+                </div>
+                <div class="quick-stat">
+                    <div class="label">Hoje (Total)</div>
+                    <div class="value" id="resumo-dia-total">R$ {{ resumo_dia.total|floatformat:2 }}</div>
+                </div>
+                <div class="quick-stat">
+                    <div class="label">Mês (Qtd)</div>
+                    <div class="value" id="resumo-mes-qtd">{{ resumo_mes.qtd }}</div>
+                </div>
+                <div class="quick-stat">
+                    <div class="label">Mês (Total)</div>
+                    <div class="value" id="resumo-mes-total">R$ {{ resumo_mes.total|floatformat:2 }}</div>
+                </div>
+            </div>
+
+            <div class="card card-soft catalog-card">
+                <div class="card-body">
+                    <h5 class="card-title">Tabela de Códigos</h5>
+                    <div class="table-wrap">
+                        <table class="table table-sm table-mobile">
+                            <thead>
+                                <tr>
+                                    <th>Código</th>
+                                    <th>Serviço</th>
+                                    <th class="text-end">Valor padrão</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for servico in servicos_ativos %}
+                                <tr>
+                                    <td>{{ servico.codigo }}</td>
+                                    <td>{{ servico.nome }}</td>
+                                    <td class="text-end">R$ {{ servico.valor_padrao|floatformat:2 }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="3" class="text-center text-muted py-4">Sem serviços ativos.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const catalogNode = document.getElementById('servicos-catalogo-json');
+    const catalogList = catalogNode ? JSON.parse(catalogNode.textContent) : [];
+    const byCode = {};
+    catalogList.forEach(item => {
+        byCode[(item.codigo || '').toUpperCase()] = item;
+    });
+
+    const form = document.getElementById('quick-lancamento-form');
+    if (!form) return;
+
+    const diaInput = document.getElementById('id_dia');
+    const diaCompetenciaInput = document.getElementById('id_dia_competencia');
+    const diaFixoLabel = document.getElementById('dia-fixo-label');
+    const lancamentosDiaTitle = document.getElementById('lancamentos-dia-title');
+    const codigoInput = document.getElementById('id_codigo');
+    const valorInput = document.getElementById('id_valor');
+    const preview = document.getElementById('servico-preview');
+    const formMesInput = form.querySelector('input[name="mes"]');
+    const formAnoInput = form.querySelector('input[name="ano"]');
+    const resumoDiaQtd = document.getElementById('resumo-dia-qtd');
+    const resumoDiaTotal = document.getElementById('resumo-dia-total');
+    const resumoMesQtd = document.getElementById('resumo-mes-qtd');
+    const resumoMesTotal = document.getElementById('resumo-mes-total');
+    let lastAutoValue = '';
+    let resumoRefreshTimer = null;
+
+    const formatBRL = (rawValue) => {
+        const parsed = Number(String(rawValue).replace(',', '.'));
+        if (Number.isNaN(parsed)) return rawValue;
+        return parsed.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const resolveCodigo = ({ autofill = true } = {}) => {
+        const code = (codigoInput.value || '').trim().toUpperCase();
+        const item = byCode[code];
+
+        if (!code) {
+            preview.textContent = '';
+            preview.className = 'small mt-1';
+            return null;
+        }
+
+        if (!item) {
+            preview.textContent = 'Código não encontrado.';
+            preview.className = 'small mt-1 text-danger';
+            return null;
+        }
+
+        const autoValue = formatBRL(item.valor_padrao);
+        const currentValue = (valorInput.value || '').trim();
+        if (autofill && (!currentValue || currentValue === lastAutoValue)) {
+            valorInput.value = autoValue;
+            lastAutoValue = autoValue;
+        }
+        preview.textContent = `Serviço: ${item.nome} | Valor padrão: R$ ${formatBRL(item.valor_padrao)}`;
+        preview.className = 'small mt-1 text-success';
+        return item;
+    };
+
+    const maxDayForCurrentCompetencia = () => {
+        const mes = Number(formMesInput ? formMesInput.value : '');
+        const ano = Number(formAnoInput ? formAnoInput.value : '');
+        if (!mes || !ano) return 31;
+        return new Date(ano, mes, 0).getDate();
+    };
+
+    const adjustDay = (delta) => {
+        const maxDay = maxDayForCurrentCompetencia();
+        const current = Number(diaInput.value || 1);
+        let next = current + delta;
+        if (next < 1) next = 1;
+        if (next > maxDay) next = maxDay;
+        diaInput.value = String(next);
+        if (diaCompetenciaInput) {
+            diaCompetenciaInput.value = String(next);
+        }
+    };
+
+    const updateLabelsForDay = (day, month, year) => {
+        if (diaFixoLabel) {
+            diaFixoLabel.textContent = `Dia fixo: ${day}/${month}/${year}`;
+        }
+        if (lancamentosDiaTitle) {
+            lancamentosDiaTitle.textContent = `Lançamentos do dia ${day}/${month}/${year}`;
+        }
+    };
+
+    const updateResumoCards = (payload) => {
+        if (!payload) return;
+        if (resumoDiaQtd) resumoDiaQtd.textContent = payload.resumo_dia.qtd;
+        if (resumoDiaTotal) resumoDiaTotal.textContent = `R$ ${formatBRL(payload.resumo_dia.total)}`;
+        if (resumoMesQtd) resumoMesQtd.textContent = payload.resumo_mes.qtd;
+        if (resumoMesTotal) resumoMesTotal.textContent = `R$ ${formatBRL(payload.resumo_mes.total)}`;
+        diaInput.value = String(payload.dia);
+        if (diaCompetenciaInput) diaCompetenciaInput.value = String(payload.dia);
+        updateLabelsForDay(payload.dia, payload.mes, payload.ano);
+    };
+
+    const fetchResumoCards = () => {
+        const params = new URLSearchParams({
+            ano: formAnoInput ? formAnoInput.value : '',
+            mes: formMesInput ? formMesInput.value : '',
+            dia: diaInput.value || '',
+            resumo: '1',
+        });
+        fetch(`${window.location.pathname}?${params.toString()}`, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+            .then((response) => response.json())
+            .then((payload) => updateResumoCards(payload))
+            .catch(() => {});
+    };
+
+    const scheduleResumoRefresh = () => {
+        if (resumoRefreshTimer) {
+            window.clearTimeout(resumoRefreshTimer);
+        }
+        resumoRefreshTimer = window.setTimeout(fetchResumoCards, 120);
+    };
+
+    diaInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            scheduleResumoRefresh();
+            codigoInput.focus();
+            codigoInput.select();
+        }
+    });
+
+    diaInput.addEventListener('change', scheduleResumoRefresh);
+    diaInput.addEventListener('blur', scheduleResumoRefresh);
+
+    codigoInput.addEventListener('blur', resolveCodigo);
+
+    codigoInput.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            adjustDay(1);
+            scheduleResumoRefresh();
+            return;
+        }
+
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            adjustDay(-1);
+            scheduleResumoRefresh();
+            return;
+        }
+
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const item = resolveCodigo({ autofill: true });
+            if (!item) {
+                codigoInput.focus();
+                codigoInput.select();
+                return;
+            }
+            valorInput.focus();
+            valorInput.select();
+        }
+    });
+
+    valorInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const item = resolveCodigo({ autofill: false });
+            if (!item) {
+                codigoInput.focus();
+                codigoInput.select();
+                return;
+            }
+            form.submit();
+        }
+    });
+
+    if (diaCompetenciaInput) {
+        diaCompetenciaInput.value = diaInput.value;
+    }
+
+    codigoInput.focus();
+})();
+</script>
+{% endblock %}

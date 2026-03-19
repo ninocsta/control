@@ -1,0 +1,93 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Categorias | Salão{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+    <div class="col-12 col-lg-5">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title mb-3">
+                    {% if edit_categoria %}Editar Categoria #{{ edit_categoria.id }}{% else %}Nova Categoria{% endif %}
+                </h5>
+                <form method="post" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    {% if edit_categoria %}
+                        <input type="hidden" name="action" value="update_categoria">
+                        <input type="hidden" name="categoria_id" value="{{ edit_categoria.id }}">
+                    {% else %}
+                        <input type="hidden" name="action" value="create_categoria">
+                    {% endif %}
+
+                    <div class="col-12">
+                        <label class="form-label">Nome</label>
+                        <input class="form-control" name="nome" maxlength="100" required value="{% if edit_categoria %}{{ edit_categoria.nome }}{% endif %}">
+                    </div>
+                    <div class="col-8">
+                        <label class="form-label">Ordem</label>
+                        <input class="form-control" type="number" name="ordem" min="0" value="{% if edit_categoria %}{{ edit_categoria.ordem }}{% else %}0{% endif %}">
+                    </div>
+                    <div class="col-4">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" name="ativo" id="id_ativo_categoria" {% if edit_categoria %}{% if edit_categoria.ativo %}checked{% endif %}{% else %}checked{% endif %}>
+                            <label class="form-check-label" for="id_ativo_categoria">Ativa</label>
+                        </div>
+                    </div>
+                    <div class="col-12 d-grid">
+                        <button class="btn btn-primary" type="submit">
+                            {% if edit_categoria %}Salvar categoria{% else %}Cadastrar categoria{% endif %}
+                        </button>
+                    </div>
+                    {% if edit_categoria %}
+                    <div class="col-12 d-grid">
+                        <a class="btn btn-outline-secondary" href="{% url 'salao:categorias' %}">Cancelar edição</a>
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Categorias cadastradas</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Nome</th>
+                                <th class="text-center">Status</th>
+                                <th class="text-center">Ordem</th>
+                                <th class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for categoria in categorias %}
+                            <tr>
+                                <td>{{ categoria.nome }}</td>
+                                <td class="text-center">
+                                    {% if categoria.ativo %}Ativa{% else %}Inativa{% endif %}
+                                </td>
+                                <td class="text-center">{{ categoria.ordem }}</td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:categorias' %}?edit={{ categoria.id }}">Editar</a>
+                                    <form method="post" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_categoria">
+                                        <input type="hidden" name="categoria_id" value="{{ categoria.id }}">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-center text-muted py-4">Nenhuma categoria cadastrada.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
