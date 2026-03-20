@@ -3,6 +3,8 @@ from django.utils import timezone
 
 from invoices.models import MessageQueue
 
+TIPOS_COBRANCA = ('5_dias', '2_dias', 'no_dia', 'atraso')
+
 
 def _format_valor(valor):
     return f"R$ {valor:,.2f}"
@@ -34,13 +36,14 @@ def _resolve_descricao_msg(invoice) -> str:
     )
 
 
-def montar_mensagem_cobranca(invoice, tipo):
+def montar_mensagem_cobranca(invoice, tipo, data_referencia=None):
     periodo = _format_periodo(invoice)
     vencimento = invoice.vencimento.strftime('%d/%m/%Y')
     valor = _format_valor(invoice.valor_total)
     link = _build_checkout_link(invoice)
     descricao = _resolve_descricao_msg(invoice)
     linha_descricao = f"📋 *Serviço:* {descricao}\n" if descricao else ""
+    data_referencia = data_referencia or timezone.localdate()
 
     if tipo == '5_dias':
         base = (
@@ -58,11 +61,33 @@ def montar_mensagem_cobranca(invoice, tipo):
             f"💰 *Valor:* {valor}\n\n"
         )
 
-    else:  # vence hoje
+    elif tipo == 'no_dia':
+        if data_referencia > invoice.vencimento:
+            base = (
+                f"⚠️ *Fatura vencida*\n\n"
+                f"{linha_descricao}"
+                f"A fatura *{periodo}* venceu em *{vencimento}*.\n"
+                f"💰 *Valor:* {valor}\n\n"
+            )
+        elif data_referencia < invoice.vencimento:
+            base = (
+                f"⚠️ *Lembrete de vencimento*\n\n"
+                f"{linha_descricao}"
+                f"A fatura *{periodo}* vence em *{vencimento}*.\n"
+                f"💰 *Valor:* {valor}\n\n"
+            )
+        else:
+            base = (
+                f"⚠️ *Fatura vencendo hoje*\n\n"
+                f"{linha_descricao}"
+                f"A fatura *{periodo}* vence *hoje ({vencimento})*.\n"
+                f"💰 *Valor:* {valor}\n\n"
+            )
+    else:
         base = (
-            f"⚠️ *Fatura vencendo hoje*\n\n"
+            f"🔔 *Lembrete de Fatura*\n\n"
             f"{linha_descricao}"
-            f"A fatura *{periodo}* vence *hoje ({vencimento})*.\n"
+            f"Sua fatura *{periodo}* vence em *{vencimento}*.\n"
             f"💰 *Valor:* {valor}\n\n"
         )
 
@@ -126,6 +151,15 @@ def criar_mensagem_cobranca(invoice, tipo, agendado_para=None):
             'status': 'pendente',
         }
     )
+
+
+def remover_mensagens_cobranca_pendentes(invoice):
+    deleted, _ = MessageQueue.objects.filter(
+        invoice=invoice,
+        tipo__in=TIPOS_COBRANCA,
+        status='pendente',
+    ).delete()
+    return deleted
 
 
 def criar_mensagem_confirmacao(invoice, agendado_para=None):

@@ -13,6 +13,8 @@ from invoices.services.infinitepay_service import InfinitePayService
 from invoices.services.message_queue_service import (
     agendar_mensagens_cobranca,
     agendar_mensagens_atraso,
+    montar_mensagem_cobranca,
+    remover_mensagens_cobranca_pendentes,
     registrar_falha_envio,
     marcar_mensagem_enviada,
 )
@@ -193,7 +195,7 @@ def task_processar_fila_waha(self, limite=1):
             models.Q(invoice__checkout_url__isnull=False) &
             ~models.Q(invoice__checkout_url='')
         )
-    ).select_related('invoice').order_by('agendado_para')[:limite]
+    ).select_related('invoice', 'invoice__cliente').order_by('agendado_para')[:limite]
 
     service = WahaService()
     enviados = 0
@@ -201,6 +203,20 @@ def task_processar_fila_waha(self, limite=1):
 
     for mensagem in mensagens:
         try:
+            if mensagem.tipo in tipos_cobranca and mensagem.invoice.status in ['pago', 'cancelado']:
+                remover_mensagens_cobranca_pendentes(mensagem.invoice)
+                continue
+
+            if mensagem.tipo == 'no_dia':
+                mensagem_dinamica = montar_mensagem_cobranca(
+                    mensagem.invoice,
+                    mensagem.tipo,
+                    data_referencia=timezone.localdate(),
+                )
+                if mensagem.mensagem != mensagem_dinamica:
+                    mensagem.mensagem = mensagem_dinamica
+                    mensagem.save(update_fields=['mensagem'])
+
             if not mensagem.telefone:
                 logger.warning('Mensagem %s sem telefone, marcando erro', mensagem.id)
                 registrar_falha_envio(mensagem)
