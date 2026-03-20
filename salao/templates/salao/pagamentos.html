@@ -1,0 +1,128 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Pagamentos | Salão{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-3">
+    <div class="col-12 col-lg-5">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title mb-3">
+                    {% if edit_forma %}Editar Forma #{{ edit_forma.id }}{% else %}Nova Forma{% endif %}
+                </h5>
+                <form method="post" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    {% if edit_forma %}
+                        <input type="hidden" name="action" value="update_forma_pagamento">
+                        <input type="hidden" name="forma_id" value="{{ edit_forma.id }}">
+                    {% else %}
+                        <input type="hidden" name="action" value="create_forma_pagamento">
+                    {% endif %}
+
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Código</label>
+                        <input class="form-control" name="codigo" maxlength="10" required value="{% if edit_forma %}{{ edit_forma.codigo }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-8">
+                        <label class="form-label">Nome</label>
+                        <input class="form-control" name="nome" maxlength="80" required value="{% if edit_forma %}{{ edit_forma.nome }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" name="aceita_parcelamento" id="id_aceita_parcelamento" {% if edit_forma %}{% if edit_forma.aceita_parcelamento %}checked{% endif %}{% endif %}>
+                            <label class="form-check-label" for="id_aceita_parcelamento">Aceita parcelamento (1x a 12x)</label>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" name="ativo" id="id_ativo_forma" {% if edit_forma %}{% if edit_forma.ativo %}checked{% endif %}{% else %}checked{% endif %}>
+                            <label class="form-check-label" for="id_ativo_forma">Ativa</label>
+                        </div>
+                    </div>
+                    <div class="col-12 d-grid mt-2">
+                        <button class="btn btn-primary" type="submit">
+                            {% if edit_forma %}Salvar forma{% else %}Cadastrar forma{% endif %}
+                        </button>
+                    </div>
+                    {% if edit_forma %}
+                    <div class="col-12 d-grid">
+                        <a class="btn btn-outline-secondary" href="{% url 'salao:pagamentos' %}">Cancelar edição</a>
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Formas de pagamento</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Nome</th>
+                                <th class="text-center">Parcelamento</th>
+                                <th class="text-center">Status</th>
+                                <th class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for forma in formas_pagamento %}
+                            <tr>
+                                <td>{{ forma.codigo }}</td>
+                                <td>{{ forma.nome }}</td>
+                                <td class="text-center">{% if forma.aceita_parcelamento %}Sim{% else %}Não{% endif %}</td>
+                                <td class="text-center">{% if forma.ativo %}Ativa{% else %}Inativa{% endif %}</td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:pagamentos' %}?edit_forma={{ forma.id }}">Editar</a>
+                                    <a class="btn btn-sm btn-outline-info" href="{% url 'salao:pagamentos' %}?forma_taxa={{ forma.id }}">Taxas</a>
+                                    <form method="post" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_forma_pagamento">
+                                        <input type="hidden" name="forma_id" value="{{ forma.id }}">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="5" class="text-center text-muted py-4">Nenhuma forma cadastrada.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card card-soft">
+    <div class="card-body">
+        <h5 class="card-title mb-3">Taxas por forma e parcelas</h5>
+        {% if forma_taxa %}
+            <div class="small text-muted mb-2">
+                Configurando taxas de: <strong>{{ forma_taxa.codigo }} - {{ forma_taxa.nome }}</strong>
+            </div>
+            <form method="post" class="row g-2 align-items-end">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="save_taxas_forma">
+                <input type="hidden" name="forma_id" value="{{ forma_taxa.id }}">
+                {% for row in taxas_rows %}
+                <div class="col-6 col-md-3 col-lg-2">
+                    <label class="form-label">{{ row.parcela }}x (%)</label>
+                    <input class="form-control" name="taxa_{{ row.parcela }}" inputmode="decimal" placeholder="0,00" value="{{ row.percentual|default_if_none:'' }}">
+                </div>
+                {% endfor %}
+                <div class="col-12 col-md-3 d-grid">
+                    <button class="btn btn-primary" type="submit">Salvar taxas</button>
+                </div>
+            </form>
+            <div class="small text-muted mt-2">Deixe em branco para remover a taxa daquela parcela.</div>
+        {% else %}
+            <div class="alert alert-info mb-0">Cadastre uma forma de pagamento para começar a configurar as taxas.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

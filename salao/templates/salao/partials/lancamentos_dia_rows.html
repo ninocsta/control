@@ -1,0 +1,30 @@
+{% for item in lancamentos_dia %}
+<tr>
+    <td class="d-none d-md-table-cell">{{ item.id }}</td>
+    <td>{{ item.servico.codigo }} - {{ item.servico.nome }}</td>
+    <td>
+        {% if item.forma_pagamento %}
+            {{ item.forma_pagamento.codigo }} - {{ item.forma_pagamento.nome }}{% if item.parcelas > 1 %} ({{ item.parcelas }}x){% endif %}
+        {% else %}
+            -
+        {% endif %}
+    </td>
+    <td class="text-end">R$ {{ item.valor_bruto|floatformat:2 }}</td>
+    <td class="text-end">R$ {{ item.valor_taxa|floatformat:2 }}</td>
+    <td class="text-end">R$ {{ item.valor_cobrado|floatformat:2 }}</td>
+    <td class="text-end text-nowrap">
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:lancamentos' %}?ano={{ ano }}&mes={{ mes }}&dia={{ dia }}&edit={{ item.id }}">Editar</a>
+        <form method="post" class="d-inline">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="delete_lancamento">
+            <input type="hidden" name="lancamento_id" value="{{ item.id }}">
+            <input type="hidden" name="mes" value="{{ mes }}">
+            <input type="hidden" name="ano" value="{{ ano }}">
+            <input type="hidden" name="dia" value="{{ dia }}">
+            <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+        </form>
+    </td>
+</tr>
+{% empty %}
+<tr><td colspan="7" class="text-center text-muted py-4">Nenhum lançamento no dia.</td></tr>
+{% endfor %}

@@ -31,11 +31,7 @@
                         <label class="form-label">Valor padrão</label>
                         <input class="form-control" name="valor_padrao" inputmode="decimal" placeholder="0,00" required value="{% if edit_servico %}{{ edit_servico.valor_padrao }}{% endif %}">
                     </div>
-                    <div class="col-8 col-md-4">
-                        <label class="form-label">Ordem</label>
-                        <input class="form-control" type="number" name="ordem" min="0" value="{% if edit_servico %}{{ edit_servico.ordem }}{% else %}0{% endif %}">
-                    </div>
-                    <div class="col-4 col-md-3">
+                    <div class="col-12 col-md-3">
                         <div class="form-check mt-4">
                             <input class="form-check-input" type="checkbox" name="ativo" id="id_ativo_servico" {% if edit_servico %}{% if edit_servico.ativo %}checked{% endif %}{% else %}checked{% endif %}>
                             <label class="form-check-label" for="id_ativo_servico">Ativo</label>
@@ -68,7 +64,6 @@
                                 <th>Nome</th>
                                 <th class="text-end">Valor padrão</th>
                                 <th class="text-center">Status</th>
-                                <th class="text-center">Ordem</th>
                                 <th class="text-end">Ações</th>
                             </tr>
                         </thead>
@@ -81,7 +76,6 @@
                                 <td class="text-center">
                                     {% if servico.ativo %}Ativo{% else %}Inativo{% endif %}
                                 </td>
-                                <td class="text-center">{{ servico.ordem }}</td>
                                 <td class="text-end text-nowrap">
                                     <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:servicos' %}?edit={{ servico.id }}">Editar</a>
                                     <form method="post" class="d-inline">
@@ -93,7 +87,7 @@
                                 </td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="6" class="text-center text-muted py-4">Nenhum serviço cadastrado.</td></tr>
+                            <tr><td colspan="5" class="text-center text-muted py-4">Nenhum serviço cadastrado.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>

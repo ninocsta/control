@@ -36,15 +36,6 @@
         color: #402f3a;
     }
 
-    .kbd-list {
-        margin: 0;
-        padding-left: 1rem;
-        color: #665460;
-        font-size: .89rem;
-    }
-
-    .kbd-list li { margin-bottom: .34rem; }
-
     .kbd {
         font-family: "Nunito", sans-serif;
         font-weight: 800;
@@ -67,6 +58,13 @@
         top: 12px;
     }
 
+    .preview-box {
+        border: 1px dashed #e8c8d5;
+        border-radius: 12px;
+        background: #fff;
+        padding: .55rem .7rem;
+    }
+
     @media (max-width: 992px) {
         .sticky-help { position: static; }
     }
@@ -81,6 +79,7 @@
 
 {% block content %}
 {{ servicos_catalogo|json_script:'servicos-catalogo-json' }}
+{{ formas_catalogo|json_script:'formas-catalogo-json' }}
 <div class="row g-3">
     <div class="col-12 col-xl-8">
         <div class="card card-soft quick-main mb-3">
@@ -113,37 +112,51 @@
                     </div>
                 </form>
 
-                {% if servicos_ativos %}
+                {% if servicos_ativos and formas_pagamento_ativas %}
                 <form method="post" id="quick-lancamento-form" class="row g-2 align-items-end">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="create_lancamento">
                     <input type="hidden" name="mes" value="{{ mes }}">
                     <input type="hidden" name="ano" value="{{ ano }}">
 
-                    <div class="col-12 col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label">Dia</label>
                         <input class="form-control" id="id_dia" type="number" min="1" max="31" name="dia" value="{{ dia }}" required>
                     </div>
-                    <div class="col-12 col-md-5">
-                        <label class="form-label">Código do serviço</label>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label">Cód. Serviço</label>
                         <input class="form-control" id="id_codigo" name="codigo" autocomplete="off" placeholder="Ex: C01" required>
                     </div>
-                    <div class="col-12 col-md-3">
-                        <label class="form-label">Valor cobrado</label>
-                        <input class="form-control" id="id_valor" name="valor_cobrado" inputmode="decimal" placeholder="0,00" required>
+                    <div class="col-8 col-md-2">
+                        <label class="form-label">Valor bruto</label>
+                        <input class="form-control" id="id_valor_bruto" name="valor_bruto" inputmode="decimal" placeholder="0,00" required>
                     </div>
-                    <div class="col-12 col-md-2 d-grid">
+                    <div class="col-4 col-md-2">
+                        <label class="form-label">Cód. Pgto</label>
+                        <input class="form-control" id="id_codigo_forma_pagamento" name="codigo_forma_pagamento" autocomplete="off" placeholder="Ex: 2" value="1" required>
+                    </div>
+                    <div class="col-6 col-md-2">
+                        <label class="form-label">Parcelas</label>
+                        <input class="form-control" id="id_parcelas" name="parcelas" type="number" min="1" max="12" value="1" required>
+                    </div>
+                    <div class="col-6 col-md-1 d-grid">
                         <button class="btn btn-primary" id="save-button" type="submit">Salvar</button>
                     </div>
 
                     <div class="col-12 mt-2">
-                        <div class="small text-muted">Fluxo rápido: <span class="kbd">Enter</span> avança campos e salva no valor.</div>
-                        <div class="small text-muted">No campo código: <span class="kbd">↑</span> dia +1 e <span class="kbd">↓</span> dia -1.</div>
-                        <div class="small mt-1" id="servico-preview"></div>
+                        <div class="small text-muted">Fluxo: serviço -> valor -> pagamento -> parcelas -> salvar (<span class="kbd">Enter</span>).</div>
+                        <div class="small text-muted">No campo serviço: <span class="kbd">↑</span> dia +1 e <span class="kbd">↓</span> dia -1.</div>
+                    </div>
+                    <div class="col-12">
+                        <div class="preview-box">
+                            <div class="small" id="servico-preview"></div>
+                            <div class="small" id="pagamento-preview"></div>
+                            <div class="small fw-bold" id="liquido-preview"></div>
+                        </div>
                     </div>
                 </form>
                 {% else %}
-                    <div class="alert alert-warning mb-0">Cadastre ao menos um serviço para lançar atendimentos.</div>
+                    <div class="alert alert-warning mb-0">Cadastre serviços e formas de pagamento para lançar atendimentos.</div>
                 {% endif %}
             </div>
         </div>
@@ -164,7 +177,7 @@
                         <label class="form-label">Data</label>
                         <input class="form-control" type="date" name="data" value="{{ edit_lancamento.data|date:'Y-m-d' }}" required>
                     </div>
-                    <div class="col-md-5">
+                    <div class="col-md-4">
                         <label class="form-label">Serviço</label>
                         <select class="form-select" name="servico_id" required>
                             {% for servico in servicos_ativos %}
@@ -175,8 +188,22 @@
                         </select>
                     </div>
                     <div class="col-md-2">
-                        <label class="form-label">Valor</label>
-                        <input class="form-control" name="valor_cobrado" value="{{ edit_lancamento.valor_cobrado }}" required>
+                        <label class="form-label">Valor bruto</label>
+                        <input class="form-control" name="valor_bruto" value="{{ edit_lancamento.valor_bruto|floatformat:2 }}" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Forma de pagamento</label>
+                        <select class="form-select" id="id_edit_forma_pagamento" name="forma_pagamento_id" required>
+                            {% for forma in formas_pagamento_ativas %}
+                                <option value="{{ forma.id }}" data-aceita-parcelamento="{% if forma.aceita_parcelamento %}1{% else %}0{% endif %}" {% if edit_lancamento.forma_pagamento_id == forma.id %}selected{% endif %}>
+                                    {{ forma.codigo }} - {{ forma.nome }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Parcelas</label>
+                        <input class="form-control" id="id_edit_parcelas" name="parcelas" type="number" min="1" max="12" value="{{ edit_lancamento.parcelas|default:1 }}" required>
                     </div>
                     <div class="col-md-2 d-grid">
                         <button class="btn btn-success" type="submit">Salvar</button>
@@ -195,32 +222,15 @@
                             <tr>
                                 <th class="d-none d-md-table-cell">ID</th>
                                 <th>Serviço</th>
-                                <th class="text-end">Valor</th>
+                                <th>Pagamento</th>
+                                <th class="text-end">Bruto</th>
+                                <th class="text-end">Taxa</th>
+                                <th class="text-end">Líquido</th>
                                 <th class="text-end">Ações</th>
                             </tr>
                         </thead>
-                        <tbody>
-                            {% for item in lancamentos_dia %}
-                            <tr>
-                                <td class="d-none d-md-table-cell">{{ item.id }}</td>
-                                <td>{{ item.servico.codigo }} - {{ item.servico.nome }}</td>
-                                <td class="text-end">R$ {{ item.valor_cobrado|floatformat:2 }}</td>
-                                <td class="text-end text-nowrap">
-                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:lancamentos' %}?ano={{ ano }}&mes={{ mes }}&dia={{ dia }}&edit={{ item.id }}">Editar</a>
-                                    <form method="post" class="d-inline">
-                                        {% csrf_token %}
-                                        <input type="hidden" name="action" value="delete_lancamento">
-                                        <input type="hidden" name="lancamento_id" value="{{ item.id }}">
-                                        <input type="hidden" name="mes" value="{{ mes }}">
-                                        <input type="hidden" name="ano" value="{{ ano }}">
-                                        <input type="hidden" name="dia" value="{{ dia }}">
-                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
-                                    </form>
-                                </td>
-                            </tr>
-                            {% empty %}
-                            <tr><td colspan="4" class="text-center text-muted py-4">Nenhum lançamento no dia.</td></tr>
-                            {% endfor %}
+                        <tbody id="lancamentos-dia-tbody">
+                            {% include 'salao/partials/lancamentos_dia_rows.html' with lancamentos_dia=lancamentos_dia ano=ano mes=mes dia=dia %}
                         </tbody>
                     </table>
                 </div>
@@ -233,11 +243,11 @@
         <div class="sticky-help">
             <div class="quick-stats mb-3">
                 <div class="quick-stat">
-                    <div class="label">Hoje (Qtd)</div>
+                    <div class="label">Dia (Qtd)</div>
                     <div class="value" id="resumo-dia-qtd">{{ resumo_dia.qtd }}</div>
                 </div>
                 <div class="quick-stat">
-                    <div class="label">Hoje (Total)</div>
+                    <div class="label">Dia (Total)</div>
                     <div class="value" id="resumo-dia-total">R$ {{ resumo_dia.total|floatformat:2 }}</div>
                 </div>
                 <div class="quick-stat">
@@ -250,9 +260,9 @@
                 </div>
             </div>
 
-            <div class="card card-soft catalog-card">
+            <div class="card card-soft catalog-card mb-3">
                 <div class="card-body">
-                    <h5 class="card-title">Tabela de Códigos</h5>
+                    <h5 class="card-title">Códigos de Serviço</h5>
                     <div class="table-wrap">
                         <table class="table table-sm table-mobile">
                             <thead>
@@ -277,6 +287,34 @@
                     </div>
                 </div>
             </div>
+
+            <div class="card card-soft catalog-card">
+                <div class="card-body">
+                    <h5 class="card-title">Códigos de Pagamento</h5>
+                    <div class="table-wrap">
+                        <table class="table table-sm table-mobile">
+                            <thead>
+                                <tr>
+                                    <th>Código</th>
+                                    <th>Forma</th>
+                                    <th class="text-end">Parcelamento</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for forma in formas_pagamento_ativas %}
+                                <tr>
+                                    <td>{{ forma.codigo }}</td>
+                                    <td>{{ forma.nome }}</td>
+                                    <td class="text-end">{% if forma.aceita_parcelamento %}1x a 12x{% else %}1x{% endif %}</td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="3" class="text-center text-muted py-4">Sem formas ativas.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -286,10 +324,18 @@
 <script>
 (function () {
     const catalogNode = document.getElementById('servicos-catalogo-json');
+    const formasNode = document.getElementById('formas-catalogo-json');
     const catalogList = catalogNode ? JSON.parse(catalogNode.textContent) : [];
+    const formasList = formasNode ? JSON.parse(formasNode.textContent) : [];
+
     const byCode = {};
     catalogList.forEach(item => {
         byCode[(item.codigo || '').toUpperCase()] = item;
+    });
+
+    const byCodeForma = {};
+    formasList.forEach(item => {
+        byCodeForma[(item.codigo || '').toUpperCase()] = item;
     });
 
     const form = document.getElementById('quick-lancamento-form');
@@ -299,15 +345,24 @@
     const diaCompetenciaInput = document.getElementById('id_dia_competencia');
     const diaFixoLabel = document.getElementById('dia-fixo-label');
     const lancamentosDiaTitle = document.getElementById('lancamentos-dia-title');
+    const tbodyLancamentosDia = document.getElementById('lancamentos-dia-tbody');
+
     const codigoInput = document.getElementById('id_codigo');
-    const valorInput = document.getElementById('id_valor');
-    const preview = document.getElementById('servico-preview');
+    const codigoFormaInput = document.getElementById('id_codigo_forma_pagamento');
+    const parcelasInput = document.getElementById('id_parcelas');
+    const valorBrutoInput = document.getElementById('id_valor_bruto');
+
+    const servicoPreview = document.getElementById('servico-preview');
+    const pagamentoPreview = document.getElementById('pagamento-preview');
+    const liquidoPreview = document.getElementById('liquido-preview');
+
     const formMesInput = form.querySelector('input[name="mes"]');
     const formAnoInput = form.querySelector('input[name="ano"]');
     const resumoDiaQtd = document.getElementById('resumo-dia-qtd');
     const resumoDiaTotal = document.getElementById('resumo-dia-total');
     const resumoMesQtd = document.getElementById('resumo-mes-qtd');
     const resumoMesTotal = document.getElementById('resumo-mes-total');
+
     let lastAutoValue = '';
     let resumoRefreshTimer = null;
 
@@ -317,31 +372,112 @@
         return parsed.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    const resolveCodigo = ({ autofill = true } = {}) => {
+    const parseDecimal = (value) => {
+        const parsed = Number(String(value || '').replace(',', '.'));
+        return Number.isNaN(parsed) ? null : parsed;
+    };
+
+    const resolveServico = ({ autofill = true } = {}) => {
         const code = (codigoInput.value || '').trim().toUpperCase();
         const item = byCode[code];
 
         if (!code) {
-            preview.textContent = '';
-            preview.className = 'small mt-1';
+            servicoPreview.textContent = '';
+            servicoPreview.className = 'small';
             return null;
         }
 
         if (!item) {
-            preview.textContent = 'Código não encontrado.';
-            preview.className = 'small mt-1 text-danger';
+            servicoPreview.textContent = 'Serviço não encontrado.';
+            servicoPreview.className = 'small text-danger';
             return null;
         }
 
         const autoValue = formatBRL(item.valor_padrao);
-        const currentValue = (valorInput.value || '').trim();
+        const currentValue = (valorBrutoInput.value || '').trim();
         if (autofill && (!currentValue || currentValue === lastAutoValue)) {
-            valorInput.value = autoValue;
+            valorBrutoInput.value = autoValue;
             lastAutoValue = autoValue;
         }
-        preview.textContent = `Serviço: ${item.nome} | Valor padrão: R$ ${formatBRL(item.valor_padrao)}`;
-        preview.className = 'small mt-1 text-success';
+
+        servicoPreview.textContent = `Serviço: ${item.nome} | Valor padrão: R$ ${formatBRL(item.valor_padrao)}`;
+        servicoPreview.className = 'small text-success';
         return item;
+    };
+
+    const resolveForma = () => {
+        const code = (codigoFormaInput.value || '').trim().toUpperCase();
+        const forma = byCodeForma[code];
+
+        if (!code) {
+            pagamentoPreview.textContent = '';
+            pagamentoPreview.className = 'small';
+            parcelasInput.removeAttribute('readonly');
+            return null;
+        }
+
+        if (!forma) {
+            pagamentoPreview.textContent = 'Forma de pagamento não encontrada.';
+            pagamentoPreview.className = 'small text-danger';
+            parcelasInput.removeAttribute('readonly');
+            return null;
+        }
+
+        if (!forma.aceita_parcelamento) {
+            parcelasInput.value = '1';
+            parcelasInput.setAttribute('readonly', 'readonly');
+        } else {
+            parcelasInput.removeAttribute('readonly');
+            if (!parcelasInput.value || Number(parcelasInput.value) < 1) {
+                parcelasInput.value = '1';
+            }
+        }
+
+        pagamentoPreview.textContent = `Pagamento: ${forma.nome} (${forma.codigo})`;
+        pagamentoPreview.className = 'small text-success';
+        return forma;
+    };
+
+    const getPercentualTaxa = (forma, parcelas) => {
+        if (!forma || !forma.taxas) return null;
+        const key = String(parcelas);
+        if (Object.prototype.hasOwnProperty.call(forma.taxas, key)) {
+            return parseDecimal(forma.taxas[key]);
+        }
+        return null;
+    };
+
+    const updateLiquidoPreview = () => {
+        const forma = resolveForma();
+        if (!forma) {
+            liquidoPreview.textContent = '';
+            liquidoPreview.className = 'small';
+            return null;
+        }
+
+        const parcelas = Number(parcelasInput.value || 1);
+        const valorBruto = parseDecimal(valorBrutoInput.value);
+        const taxaPercentual = getPercentualTaxa(forma, parcelas);
+
+        if (taxaPercentual === null) {
+            liquidoPreview.textContent = 'Taxa não cadastrada para essa forma/parcela.';
+            liquidoPreview.className = 'small text-danger';
+            return null;
+        }
+
+        if (valorBruto === null) {
+            liquidoPreview.textContent = `Taxa ${formatBRL(taxaPercentual)}% | Informe o valor bruto para prévia.`;
+            liquidoPreview.className = 'small text-muted';
+            return { forma, parcelas, taxaPercentual, valorBruto: null };
+        }
+
+        const valorTaxa = (valorBruto * taxaPercentual) / 100;
+        const valorLiquido = Math.max(0, valorBruto - valorTaxa);
+
+        liquidoPreview.textContent = `Taxa: R$ ${formatBRL(valorTaxa)} (${formatBRL(taxaPercentual)}%) | Líquido: R$ ${formatBRL(valorLiquido)}`;
+        liquidoPreview.className = 'small text-primary';
+
+        return { forma, parcelas, taxaPercentual, valorBruto, valorTaxa, valorLiquido };
     };
 
     const maxDayForCurrentCompetencia = () => {
@@ -372,23 +508,26 @@
         }
     };
 
-    const updateResumoCards = (payload) => {
+    const updateResumoAndGrid = (payload) => {
         if (!payload) return;
         if (resumoDiaQtd) resumoDiaQtd.textContent = payload.resumo_dia.qtd;
         if (resumoDiaTotal) resumoDiaTotal.textContent = `R$ ${formatBRL(payload.resumo_dia.total)}`;
         if (resumoMesQtd) resumoMesQtd.textContent = payload.resumo_mes.qtd;
         if (resumoMesTotal) resumoMesTotal.textContent = `R$ ${formatBRL(payload.resumo_mes.total)}`;
+        if (tbodyLancamentosDia && typeof payload.rows_html === 'string') {
+            tbodyLancamentosDia.innerHTML = payload.rows_html;
+        }
         diaInput.value = String(payload.dia);
         if (diaCompetenciaInput) diaCompetenciaInput.value = String(payload.dia);
         updateLabelsForDay(payload.dia, payload.mes, payload.ano);
     };
 
-    const fetchResumoCards = () => {
+    const fetchResumoAndGrid = () => {
         const params = new URLSearchParams({
             ano: formAnoInput ? formAnoInput.value : '',
             mes: formMesInput ? formMesInput.value : '',
             dia: diaInput.value || '',
-            resumo: '1',
+            refresh: '1',
         });
         fetch(`${window.location.pathname}?${params.toString()}`, {
             headers: {
@@ -396,76 +535,141 @@
             },
         })
             .then((response) => response.json())
-            .then((payload) => updateResumoCards(payload))
+            .then((payload) => updateResumoAndGrid(payload))
             .catch(() => {});
     };
 
-    const scheduleResumoRefresh = () => {
+    const scheduleRefresh = () => {
         if (resumoRefreshTimer) {
             window.clearTimeout(resumoRefreshTimer);
         }
-        resumoRefreshTimer = window.setTimeout(fetchResumoCards, 120);
+        resumoRefreshTimer = window.setTimeout(fetchResumoAndGrid, 120);
     };
 
     diaInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
             event.preventDefault();
-            scheduleResumoRefresh();
+            scheduleRefresh();
             codigoInput.focus();
             codigoInput.select();
         }
     });
 
-    diaInput.addEventListener('change', scheduleResumoRefresh);
-    diaInput.addEventListener('blur', scheduleResumoRefresh);
+    diaInput.addEventListener('change', scheduleRefresh);
+    diaInput.addEventListener('blur', scheduleRefresh);
 
-    codigoInput.addEventListener('blur', resolveCodigo);
+    codigoInput.addEventListener('blur', () => {
+        resolveServico({ autofill: true });
+        updateLiquidoPreview();
+    });
+
+    codigoFormaInput.addEventListener('blur', updateLiquidoPreview);
+    parcelasInput.addEventListener('change', updateLiquidoPreview);
+    valorBrutoInput.addEventListener('input', updateLiquidoPreview);
 
     codigoInput.addEventListener('keydown', (event) => {
         if (event.key === 'ArrowUp') {
             event.preventDefault();
             adjustDay(1);
-            scheduleResumoRefresh();
+            scheduleRefresh();
             return;
         }
 
         if (event.key === 'ArrowDown') {
             event.preventDefault();
             adjustDay(-1);
-            scheduleResumoRefresh();
+            scheduleRefresh();
             return;
         }
 
         if (event.key === 'Enter') {
             event.preventDefault();
-            const item = resolveCodigo({ autofill: true });
+            const item = resolveServico({ autofill: true });
             if (!item) {
                 codigoInput.focus();
                 codigoInput.select();
                 return;
             }
-            valorInput.focus();
-            valorInput.select();
+            valorBrutoInput.focus();
+            valorBrutoInput.select();
         }
     });
 
-    valorInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            const item = resolveCodigo({ autofill: false });
-            if (!item) {
-                codigoInput.focus();
-                codigoInput.select();
-                return;
-            }
-            form.submit();
+    valorBrutoInput.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+
+        const servico = resolveServico({ autofill: false });
+        if (!servico) {
+            codigoInput.focus();
+            codigoInput.select();
+            return;
         }
+
+        codigoFormaInput.focus();
+        codigoFormaInput.select();
     });
+
+    codigoFormaInput.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        const forma = resolveForma();
+        if (!forma) {
+            codigoFormaInput.focus();
+            codigoFormaInput.select();
+            return;
+        }
+
+        parcelasInput.focus();
+        parcelasInput.select();
+        updateLiquidoPreview();
+    });
+
+    parcelasInput.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        const forma = resolveForma();
+        if (!forma) {
+            codigoFormaInput.focus();
+            codigoFormaInput.select();
+            return;
+        }
+        if (Number(parcelasInput.value || 1) < 1) {
+            parcelasInput.value = '1';
+        }
+
+        const previewData = updateLiquidoPreview();
+        if (!previewData || previewData.taxaPercentual === null) {
+            codigoFormaInput.focus();
+            codigoFormaInput.select();
+            return;
+        }
+
+        form.submit();
+    });
+
+    const editFormaSelect = document.getElementById('id_edit_forma_pagamento');
+    const editParcelasInput = document.getElementById('id_edit_parcelas');
+    if (editFormaSelect && editParcelasInput) {
+        const updateEditParcelasMode = () => {
+            const selectedOption = editFormaSelect.options[editFormaSelect.selectedIndex];
+            const aceita = selectedOption && selectedOption.dataset.aceitaParcelamento === '1';
+            if (!aceita) {
+                editParcelasInput.value = '1';
+                editParcelasInput.setAttribute('readonly', 'readonly');
+            } else {
+                editParcelasInput.removeAttribute('readonly');
+            }
+        };
+        editFormaSelect.addEventListener('change', updateEditParcelasMode);
+        updateEditParcelasMode();
+    }
 
     if (diaCompetenciaInput) {
         diaCompetenciaInput.value = diaInput.value;
     }
 
+    updateLiquidoPreview();
     codigoInput.focus();
 })();
 </script>
