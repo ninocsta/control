@@ -183,6 +183,110 @@
             font-weight: 700;
         }
 
+        .toast-container-salao {
+            position: fixed;
+            top: 14px;
+            right: 14px;
+            width: min(430px, calc(100vw - 24px));
+            z-index: 1085;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast-container-salao .salao-toast {
+            pointer-events: auto;
+            margin: 0;
+        }
+
+        .toast-salao {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 0;
+            border-radius: 16px;
+            box-shadow: 0 16px 34px rgba(53, 34, 44, 0.22);
+            background: #fff;
+            color: var(--text-main);
+            border-left: 6px solid #67aac8;
+            padding: .62rem .62rem .62rem .55rem;
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity .2s ease, transform .2s ease;
+        }
+
+        .toast-salao .toast-body {
+            flex: 1;
+            padding: 0;
+            font-weight: 700;
+            line-height: 1.35;
+            font-size: .95rem;
+            color: #43344b;
+        }
+
+        .toast-salao .toast-level-mark {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            flex: 0 0 auto;
+            background: currentColor;
+            opacity: .95;
+        }
+
+        .toast-salao.toast-closing {
+            opacity: 0;
+            transform: translateY(-6px);
+        }
+
+        .salao-toast-close {
+            width: 30px;
+            height: 30px;
+            border: 0;
+            border-radius: 999px;
+            background: rgba(67, 52, 75, 0.08);
+            color: #4e3a58;
+            font-weight: 800;
+            font-size: 1.2rem;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            cursor: pointer;
+        }
+
+        .salao-toast-close:hover,
+        .salao-toast-close:focus {
+            outline: none;
+            background: rgba(67, 52, 75, 0.16);
+            box-shadow: 0 0 0 .18rem rgba(85, 54, 68, 0.14);
+        }
+
+        .toast-salao.toast-success {
+            border-left-color: #2ea56f;
+            color: #2ea56f;
+            background: linear-gradient(90deg, #f2fbf7 0%, #fff 22%);
+        }
+
+        .toast-salao.toast-danger {
+            border-left-color: #d65071;
+            color: #d65071;
+            background: linear-gradient(90deg, #fff3f6 0%, #fff 22%);
+        }
+
+        .toast-salao.toast-warning {
+            border-left-color: #d29b2f;
+            color: #b37e17;
+            background: linear-gradient(90deg, #fff9ee 0%, #fff 22%);
+        }
+
+        .toast-salao.toast-info {
+            border-left-color: #67aac8;
+            color: #2b7fa4;
+            background: linear-gradient(90deg, #f2f9fd 0%, #fff 22%);
+        }
+
         .alert {
             border: 0;
             border-radius: 12px;
@@ -233,6 +337,14 @@
             .table {
                 font-size: .86rem;
             }
+
+            .toast-container-salao {
+                top: auto;
+                right: 8px;
+                left: 8px;
+                bottom: 8px;
+                width: auto;
+            }
         }
     </style>
     {% block extra_head %}{% endblock %}
@@ -256,14 +368,121 @@
         <li class="nav-item"><a class="nav-link {% if active_tab == 'categorias' %}active{% endif %}" href="{% url 'salao:categorias' %}">Categorias</a></li>
     </ul>
 
-    {% if messages %}
-        {% for message in messages %}
-            <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
-        {% endfor %}
-    {% endif %}
+    {% include 'salao/partials/toasts.html' %}
 
     {% block content %}{% endblock %}
 </div>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        var container = document.getElementById('salao-toast-container');
+        if (!container) {
+            return;
+        }
+
+        var storageKey = 'salao_toast_queue_v1';
+        var now = Date.now();
+
+        function safeLoadQueue() {
+            try {
+                var raw = sessionStorage.getItem(storageKey);
+                if (!raw) {
+                    return [];
+                }
+                var parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) {
+                    return [];
+                }
+                return parsed.filter(function (item) {
+                    return item && typeof item === 'object' && Number(item.expiresAt) > Date.now();
+                });
+            } catch (error) {
+                return [];
+            }
+        }
+
+        function saveQueue(queue) {
+            try {
+                sessionStorage.setItem(storageKey, JSON.stringify(queue));
+            } catch (error) {
+            }
+        }
+
+        function removeFromQueue(id) {
+            var queue = safeLoadQueue().filter(function (item) {
+                return item.id !== id;
+            });
+            saveQueue(queue);
+        }
+
+        function createToastElement(item) {
+            var toast = document.createElement('div');
+            toast.className = 'toast-salao toast-' + item.level + ' salao-toast';
+            toast.setAttribute('data-level', item.level);
+            toast.setAttribute('role', 'alert');
+            toast.setAttribute('aria-live', 'assertive');
+            toast.setAttribute('aria-atomic', 'true');
+            toast.innerHTML = [
+                '<div class="toast-level-mark"></div>',
+                '<div class="toast-body"></div>',
+                '<button type="button" class="salao-toast-close" aria-label="Fechar">&times;</button>'
+            ].join('');
+            toast.querySelector('.toast-body').textContent = item.message;
+            return toast;
+        }
+
+        function dismissToast(element, id) {
+            if (!element || element.dataset.closing === '1') {
+                return;
+            }
+            element.dataset.closing = '1';
+            element.classList.add('toast-closing');
+            window.setTimeout(function () {
+                if (element.parentNode) {
+                    element.parentNode.removeChild(element);
+                }
+                removeFromQueue(id);
+            }, 200);
+        }
+
+        var queue = safeLoadQueue();
+        var serverToasts = Array.from(container.querySelectorAll('.salao-toast-server')).map(function (element, index) {
+            var body = element.querySelector('.toast-body');
+            return {
+                id: 'srv-' + now + '-' + index + '-' + Math.random().toString(36).slice(2, 8),
+                level: element.dataset.level || 'info',
+                message: body ? body.textContent.trim() : '',
+                createdAt: now + index,
+                expiresAt: now + 3000
+            };
+        }).filter(function (item) {
+            return !!item.message;
+        });
+
+        queue = queue.concat(serverToasts).sort(function (a, b) {
+            return b.createdAt - a.createdAt;
+        });
+        saveQueue(queue);
+
+        container.innerHTML = '';
+
+        queue.forEach(function (item) {
+            var remaining = Math.max(350, item.expiresAt - Date.now());
+            var element = createToastElement(item);
+            container.appendChild(element);
+
+            var closeButton = element.querySelector('.salao-toast-close');
+            if (closeButton) {
+                closeButton.addEventListener('click', function () {
+                    dismissToast(element, item.id);
+                });
+            }
+
+            window.setTimeout(function () {
+                dismissToast(element, item.id);
+            }, remaining);
+        });
+    });
+</script>
 {% block extra_js %}{% endblock %}
 </body>
 </html>

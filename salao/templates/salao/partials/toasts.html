@@ -1,0 +1,41 @@
+<div id="salao-toast-container" class="toast-container-salao p-0" aria-live="polite" aria-atomic="true">
+    {% if messages %}
+        {% for message in messages %}
+            {% with tags=message.tags|default:'' %}
+                {% if 'error' in tags %}
+                    {% with level='danger' %}
+                        <div class="toast-salao toast-{{ level }} salao-toast salao-toast-server" data-level="{{ level }}" role="alert" aria-live="assertive" aria-atomic="true">
+                            <div class="toast-level-mark"></div>
+                            <div class="toast-body">{{ message }}</div>
+                            <button type="button" class="salao-toast-close" aria-label="Fechar">&times;</button>
+                        </div>
+                    {% endwith %}
+                {% elif 'success' in tags %}
+                    {% with level='success' %}
+                        <div class="toast-salao toast-{{ level }} salao-toast salao-toast-server" data-level="{{ level }}" role="alert" aria-live="assertive" aria-atomic="true">
+                            <div class="toast-level-mark"></div>
+                            <div class="toast-body">{{ message }}</div>
+                            <button type="button" class="salao-toast-close" aria-label="Fechar">&times;</button>
+                        </div>
+                    {% endwith %}
+                {% elif 'warning' in tags %}
+                    {% with level='warning' %}
+                        <div class="toast-salao toast-{{ level }} salao-toast salao-toast-server" data-level="{{ level }}" role="alert" aria-live="assertive" aria-atomic="true">
+                            <div class="toast-level-mark"></div>
+                            <div class="toast-body">{{ message }}</div>
+                            <button type="button" class="salao-toast-close" aria-label="Fechar">&times;</button>
+                        </div>
+                    {% endwith %}
+                {% else %}
+                    {% with level='info' %}
+                        <div class="toast-salao toast-{{ level }} salao-toast salao-toast-server" data-level="{{ level }}" role="alert" aria-live="assertive" aria-atomic="true">
+                            <div class="toast-level-mark"></div>
+                            <div class="toast-body">{{ message }}</div>
+                            <button type="button" class="salao-toast-close" aria-label="Fechar">&times;</button>
+                        </div>
+                    {% endwith %}
+                {% endif %}
+            {% endwith %}
+        {% endfor %}
+    {% endif %}
+</div>
