@@ -62,6 +62,47 @@
                         <label class="form-label">Observação</label>
                         <input class="form-control" name="observacao" maxlength="500" placeholder="Opcional">
                     </div>
+                    <div class="col-12">
+                        <div class="form-check mt-1">
+                            <input class="form-check-input" type="checkbox" name="gera_estoque" id="id_gera_estoque">
+                            <label class="form-check-label" for="id_gera_estoque">
+                                Compra com entrada em estoque
+                            </label>
+                        </div>
+                        <div class="small text-muted">Categoria continua sendo o fornecedor da compra.</div>
+                    </div>
+                    <div class="col-12 d-none" id="estoque-items-wrapper">
+                        <div class="border rounded-3 p-2 bg-light-subtle">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong>Itens da compra</strong>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="btn-add-item">Adicionar item</button>
+                            </div>
+                            <div id="itens-container" class="d-flex flex-column gap-2">
+                                <div class="row g-2 item-row">
+                                    <div class="col-md-5">
+                                        <select class="form-select" name="produto_id[]">
+                                            <option value="">Produto</option>
+                                            {% for produto in produtos_ativos %}
+                                                <option value="{{ produto.id }}">{{ produto.codigo }} - {{ produto.nome }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input class="form-control js-item-quantidade" name="quantidade[]" inputmode="decimal" placeholder="Qtd">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input class="form-control js-item-custo" name="custo_unitario[]" inputmode="decimal" placeholder="Custo unitário">
+                                    </div>
+                                    <div class="col-md-1 d-grid">
+                                        <button type="button" class="btn btn-outline-danger js-remove-item">&times;</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="small text-muted mt-2">
+                                O valor total da despesa será calculado pelos itens.
+                            </div>
+                        </div>
+                    </div>
                     {% if categorias_ativas %}
                     <div class="col-12 mt-2">
                         <div class="small text-muted mb-1">Atalhos de categoria:</div>
@@ -83,6 +124,12 @@
         <div class="card card-soft">
             <div class="card-body">
                 <h5 class="card-title mb-3">Editar despesa #{{ edit_despesa.id }}</h5>
+                {% if edit_despesa.gera_estoque %}
+                <div class="alert alert-warning mb-0">
+                    Essa despesa gerou entrada em estoque e não pode ser editada diretamente.
+                    Para corrigir, exclua o lançamento e faça um novo.
+                </div>
+                {% else %}
                 <form method="post" class="row g-2 align-items-end">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="update_despesa">
@@ -114,6 +161,7 @@
                         <button class="btn btn-success" type="submit">Salvar edição</button>
                     </div>
                 </form>
+                {% endif %}
             </div>
         </div>
         {% endif %}
@@ -129,6 +177,7 @@
                             <tr>
                                 <th>Data</th>
                                 <th>Categoria</th>
+                                <th class="text-center">Tipo</th>
                                 <th class="text-center">Parcela</th>
                                 <th class="d-none d-md-table-cell">Observação</th>
                                 <th class="text-end">Valor</th>
@@ -140,6 +189,9 @@
                             <tr>
                                 <td>{{ despesa.data|date:'d/m/Y' }}</td>
                                 <td>{{ despesa.categoria.nome }}</td>
+                                <td class="text-center">
+                                    {% if despesa.gera_estoque %}Compra estoque{% else %}Normal{% endif %}
+                                </td>
                                 <td class="text-center">{{ despesa.parcela_numero }}/{{ despesa.parcelas_total }}</td>
                                 <td class="d-none d-md-table-cell">{{ despesa.observacao|default:'-' }}</td>
                                 <td class="text-end">R$ {{ despesa.valor|floatformat:2 }}</td>
@@ -166,7 +218,7 @@
                                 </td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="6" class="text-center text-muted py-4">Nenhuma despesa no mês.</td></tr>
+                            <tr><td colspan="7" class="text-center text-muted py-4">Nenhuma despesa no mês.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -187,6 +239,11 @@
     const categoriaSelect = form.querySelector('select[name="categoria_id"]');
     const valorInput = form.querySelector('input[name="valor"]');
     const shortcuts = form.querySelectorAll('.js-categoria-atalho');
+    const geraEstoqueCheckbox = form.querySelector('input[name="gera_estoque"]');
+    const estoqueItemsWrapper = document.getElementById('estoque-items-wrapper');
+    const itensContainer = document.getElementById('itens-container');
+    const btnAddItem = document.getElementById('btn-add-item');
+    const produtosOptions = `{% for produto in produtos_ativos %}<option value="{{ produto.id }}">{{ produto.codigo }} - {{ produto.nome }}</option>{% endfor %}`;
 
     shortcuts.forEach((button) => {
         button.addEventListener('click', () => {
@@ -195,6 +252,92 @@
             valorInput.select();
         });
     });
+
+    const parseDecimal = (value) => {
+        const parsed = Number(String(value || '').replace(',', '.'));
+        return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
+    const formatDecimal = (value) => {
+        return value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const updateValorByItens = () => {
+        if (!geraEstoqueCheckbox.checked) return;
+        let total = 0;
+        itensContainer.querySelectorAll('.item-row').forEach((row) => {
+            const qtd = parseDecimal(row.querySelector('.js-item-quantidade')?.value);
+            const custo = parseDecimal(row.querySelector('.js-item-custo')?.value);
+            total += qtd * custo;
+        });
+        valorInput.value = formatDecimal(total);
+    };
+
+    const bindRowEvents = (row) => {
+        const removeBtn = row.querySelector('.js-remove-item');
+        if (removeBtn) {
+            removeBtn.addEventListener('click', () => {
+                const rows = itensContainer.querySelectorAll('.item-row');
+                if (rows.length === 1) {
+                    row.querySelectorAll('input, select').forEach((field) => { field.value = ''; });
+                } else {
+                    row.remove();
+                }
+                updateValorByItens();
+            });
+        }
+        row.querySelectorAll('.js-item-quantidade, .js-item-custo').forEach((field) => {
+            field.addEventListener('input', updateValorByItens);
+            field.addEventListener('change', updateValorByItens);
+        });
+    };
+
+    const createItemRow = () => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'row g-2 item-row';
+        wrapper.innerHTML = `
+            <div class="col-md-5">
+                <select class="form-select" name="produto_id[]">
+                    <option value="">Produto</option>
+                    ${produtosOptions}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <input class="form-control js-item-quantidade" name="quantidade[]" inputmode="decimal" placeholder="Qtd">
+            </div>
+            <div class="col-md-3">
+                <input class="form-control js-item-custo" name="custo_unitario[]" inputmode="decimal" placeholder="Custo unitário">
+            </div>
+            <div class="col-md-1 d-grid">
+                <button type="button" class="btn btn-outline-danger js-remove-item">&times;</button>
+            </div>
+        `;
+        bindRowEvents(wrapper);
+        return wrapper;
+    };
+
+    const updateStockMode = () => {
+        const isStock = geraEstoqueCheckbox.checked;
+        estoqueItemsWrapper.classList.toggle('d-none', !isStock);
+        if (isStock) {
+            valorInput.setAttribute('readonly', 'readonly');
+            valorInput.placeholder = 'Calculado pelos itens';
+            updateValorByItens();
+        } else {
+            valorInput.removeAttribute('readonly');
+            valorInput.placeholder = '0,00';
+        }
+    };
+
+    if (btnAddItem) {
+        btnAddItem.addEventListener('click', () => {
+            itensContainer.appendChild(createItemRow());
+        });
+    }
+
+    itensContainer.querySelectorAll('.item-row').forEach(bindRowEvents);
+    geraEstoqueCheckbox.addEventListener('change', updateStockMode);
+    updateStockMode();
 })();
 </script>
 {% endblock %}

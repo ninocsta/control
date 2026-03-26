@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, F, Sum
 from django.db.models.deletion import ProtectedError
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -14,11 +14,15 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 
 from .models import (
+    CompraEstoqueItemSalao,
+    CompraEstoqueSalao,
     CategoriaDespesaSalao,
     ComissaoMensalSalao,
     DespesaSalao,
     FormaPagamentoSalao,
     LancamentoSalao,
+    MovimentoEstoqueSalao,
+    ProdutoSalao,
     ServicoSalao,
     TaxaFormaPagamentoSalao,
 )
@@ -85,7 +89,7 @@ def _parse_day(request, ano, mes, clamp_on_overflow=False):
     return dia
 
 
-def _parse_decimal(raw_value):
+def _parse_decimal(raw_value, quantize_pattern='0.01'):
     normalized = (raw_value or '').strip().replace(',', '.')
     if not normalized:
         return None
@@ -93,7 +97,7 @@ def _parse_decimal(raw_value):
         value = Decimal(normalized)
     except (InvalidOperation, ValueError):
         return None
-    return value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    return value.quantize(Decimal(quantize_pattern), rounding=ROUND_HALF_UP)
 
 
 def _parse_int_in_range(raw_value, default, min_value, max_value):
@@ -134,6 +138,14 @@ def _redirect_pagamentos(forma_taxa_id=None):
     if forma_taxa_id:
         return redirect(f"{reverse('salao:pagamentos')}?forma_taxa={forma_taxa_id}")
     return redirect(reverse('salao:pagamentos'))
+
+
+def _redirect_produtos():
+    return redirect(reverse('salao:produtos'))
+
+
+def _redirect_estoque(ano, mes):
+    return redirect(f"{reverse('salao:estoque')}?ano={ano}&mes={mes}")
 
 
 def _date_range_for_month(ano, mes):
@@ -213,6 +225,156 @@ def _calcular_liquido_com_taxa(valor_bruto, percentual):
     if valor_liquido < Decimal('0.00'):
         valor_liquido = Decimal('0.00')
     return valor_taxa, valor_liquido
+
+
+def _quantize_money(value):
+    return value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def _quantize_quantity(value):
+    return value.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)
+
+
+def _parse_compra_itens(request):
+    produto_ids = request.POST.getlist('produto_id[]')
+    quantidades = request.POST.getlist('quantidade[]')
+    custos_unitarios = request.POST.getlist('custo_unitario[]')
+
+    total_rows = max(len(produto_ids), len(quantidades), len(custos_unitarios))
+    itens = []
+
+    for idx in range(total_rows):
+        raw_produto = (produto_ids[idx] if idx < len(produto_ids) else '').strip()
+        raw_qtd = (quantidades[idx] if idx < len(quantidades) else '').strip()
+        raw_custo = (custos_unitarios[idx] if idx < len(custos_unitarios) else '').strip()
+
+        if not raw_produto and not raw_qtd and not raw_custo:
+            continue
+
+        if not raw_produto or not raw_qtd or not raw_custo:
+            return None, f'Preencha produto, quantidade e custo unitário na linha {idx + 1}.'
+
+        produto = ProdutoSalao.objects.filter(id=raw_produto, ativo=True).first()
+        if not produto:
+            return None, f'Produto inválido na linha {idx + 1}.'
+
+        quantidade = _parse_decimal(raw_qtd, quantize_pattern='0.001')
+        custo_unitario = _parse_decimal(raw_custo, quantize_pattern='0.01')
+
+        if quantidade is None or quantidade <= Decimal('0.000'):
+            return None, f'Quantidade inválida na linha {idx + 1}.'
+        if custo_unitario is None or custo_unitario < Decimal('0.00'):
+            return None, f'Custo unitário inválido na linha {idx + 1}.'
+
+        custo_total = _quantize_money(quantidade * custo_unitario)
+        itens.append(
+            {
+                'produto': produto,
+                'quantidade': quantidade,
+                'custo_unitario': custo_unitario,
+                'custo_total': custo_total,
+            }
+        )
+
+    if not itens:
+        return None, 'Adicione ao menos um produto na compra com estoque.'
+
+    return itens, None
+
+
+def _rebuild_produto_from_movimentos(produto_id):
+    produto = ProdutoSalao.objects.select_for_update().get(id=produto_id)
+    movimentos = MovimentoEstoqueSalao.objects.filter(produto_id=produto.id).order_by('data', 'id')
+
+    saldo = Decimal('0.000')
+    custo_medio = Decimal('0.00')
+
+    for movimento in movimentos:
+        quantidade = movimento.quantidade or Decimal('0.000')
+        if quantidade <= Decimal('0.000'):
+            continue
+
+        if movimento.tipo == MovimentoEstoqueSalao.TIPO_ENTRADA:
+            custo_total_entrada = movimento.valor_custo_total or Decimal('0.00')
+            valor_estoque_atual = _quantize_money(saldo * custo_medio)
+            novo_saldo = saldo + quantidade
+            if novo_saldo > Decimal('0.000'):
+                custo_medio = _quantize_money((valor_estoque_atual + custo_total_entrada) / novo_saldo)
+            saldo = novo_saldo
+        elif movimento.tipo == MovimentoEstoqueSalao.TIPO_SAIDA:
+            saldo = saldo - quantidade
+            if saldo < Decimal('0.000'):
+                saldo = Decimal('0.000')
+
+    produto.saldo_atual = _quantize_quantity(saldo)
+    produto.custo_medio_atual = _quantize_money(custo_medio if saldo > Decimal('0.000') else Decimal('0.00'))
+    produto.save(update_fields=['saldo_atual', 'custo_medio_atual', 'atualizado_em'])
+
+
+def _registrar_entrada_compra(compra, itens):
+    produtos_para_rebuild = set()
+    movimentos = []
+    item_rows = []
+
+    for item in itens:
+        produto = ProdutoSalao.objects.select_for_update().get(id=item['produto'].id)
+        quantidade = item['quantidade']
+        custo_unitario = item['custo_unitario']
+        custo_total = item['custo_total']
+
+        valor_estoque_atual = _quantize_money(produto.saldo_atual * produto.custo_medio_atual)
+        novo_saldo = produto.saldo_atual + quantidade
+        novo_custo_medio = (
+            _quantize_money((valor_estoque_atual + custo_total) / novo_saldo)
+            if novo_saldo > Decimal('0.000')
+            else Decimal('0.00')
+        )
+
+        produto.saldo_atual = _quantize_quantity(novo_saldo)
+        produto.custo_medio_atual = novo_custo_medio
+        produto.save(update_fields=['saldo_atual', 'custo_medio_atual', 'atualizado_em'])
+
+        item_rows.append(
+            CompraEstoqueItemSalao(
+                compra=compra,
+                produto=produto,
+                quantidade=quantidade,
+                custo_unitario=custo_unitario,
+                custo_total=custo_total,
+            )
+        )
+
+        movimentos.append(
+            MovimentoEstoqueSalao(
+                data=compra.data,
+                produto=produto,
+                tipo=MovimentoEstoqueSalao.TIPO_ENTRADA,
+                motivo=MovimentoEstoqueSalao.MOTIVO_COMPRA,
+                quantidade=quantidade,
+                custo_unitario_aplicado=custo_unitario,
+                valor_custo_total=custo_total,
+                compra_estoque=compra,
+                observacao=compra.observacao,
+            )
+        )
+        produtos_para_rebuild.add(produto.id)
+
+    CompraEstoqueItemSalao.objects.bulk_create(item_rows)
+    MovimentoEstoqueSalao.objects.bulk_create(movimentos)
+    for produto_id in produtos_para_rebuild:
+        _rebuild_produto_from_movimentos(produto_id)
+
+
+def _reverter_compra_estoque(compra):
+    if not compra:
+        return
+    produto_ids = list(
+        MovimentoEstoqueSalao.objects.filter(compra_estoque=compra).values_list('produto_id', flat=True).distinct()
+    )
+    MovimentoEstoqueSalao.objects.filter(compra_estoque=compra).delete()
+    compra.delete()
+    for produto_id in produto_ids:
+        _rebuild_produto_from_movimentos(produto_id)
 
 
 def _resumo_lancamentos_por_competencia(ano, mes, dia):
@@ -475,6 +637,7 @@ def despesas(request):
     categorias_ativas = list(
         CategoriaDespesaSalao.objects.filter(ativo=True).order_by('nome')
     )
+    produtos_ativos = list(ProdutoSalao.objects.filter(ativo=True).order_by('codigo'))
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -494,33 +657,57 @@ def despesas(request):
                 messages.error(request, 'Selecione uma categoria ativa.')
                 return _redirect_despesas(ano, mes)
 
-            valor = _parse_decimal(request.POST.get('valor'))
-            if valor is None or valor < Decimal('0.00'):
-                messages.error(request, 'Informe um valor válido.')
-                return _redirect_despesas(ano, mes)
-
             observacao = (request.POST.get('observacao') or '').strip()
             parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
+            gera_estoque = _parse_checkbox(request.POST.get('gera_estoque'))
+
+            itens = []
+            if gera_estoque:
+                itens, erro_itens = _parse_compra_itens(request)
+                if erro_itens:
+                    messages.error(request, erro_itens)
+                    return _redirect_despesas(ano, mes)
+                valor = _quantize_money(sum((item['custo_total'] for item in itens), Decimal('0.00')))
+            else:
+                valor = _parse_decimal(request.POST.get('valor'))
+                if valor is None or valor < Decimal('0.00'):
+                    messages.error(request, 'Informe um valor válido.')
+                    return _redirect_despesas(ano, mes)
 
             grupo_parcelamento_id = uuid.uuid4() if parcelas > 1 else None
             valores_parcelados = _split_amount_evenly(valor, parcelas)
-            despesas_para_criar = []
 
-            for idx in range(parcelas):
-                data_parcela = _add_months_preserving_day(data_despesa, idx)
-                despesas_para_criar.append(
-                    DespesaSalao(
-                        data=data_parcela,
-                        categoria=categoria,
-                        valor=valores_parcelados[idx],
-                        observacao=observacao,
-                        grupo_parcelamento_id=grupo_parcelamento_id,
-                        parcela_numero=idx + 1,
+            with transaction.atomic():
+                compra_estoque = None
+                if gera_estoque:
+                    compra_estoque = CompraEstoqueSalao.objects.create(
+                        data=data_despesa,
+                        categoria_fornecedor=categoria,
+                        valor_total=valor,
                         parcelas_total=parcelas,
+                        grupo_parcelamento_id=grupo_parcelamento_id,
+                        observacao=observacao,
                     )
-                )
+                    _registrar_entrada_compra(compra_estoque, itens)
 
-            DespesaSalao.objects.bulk_create(despesas_para_criar)
+                despesas_para_criar = []
+                for idx in range(parcelas):
+                    data_parcela = _add_months_preserving_day(data_despesa, idx)
+                    despesas_para_criar.append(
+                        DespesaSalao(
+                            data=data_parcela,
+                            categoria=categoria,
+                            gera_estoque=gera_estoque,
+                            compra_estoque=compra_estoque,
+                            valor=valores_parcelados[idx],
+                            observacao=observacao,
+                            grupo_parcelamento_id=grupo_parcelamento_id,
+                            parcela_numero=idx + 1,
+                            parcelas_total=parcelas,
+                        )
+                    )
+                DespesaSalao.objects.bulk_create(despesas_para_criar)
+
             if parcelas > 1:
                 messages.success(request, f'Despesa parcelada salva em {parcelas}x.')
             else:
@@ -530,7 +717,29 @@ def despesas(request):
         if action == 'delete_despesa':
             despesa_id = request.POST.get('despesa_id')
             despesa = get_object_or_404(DespesaSalao, id=despesa_id)
-            despesa.delete()
+
+            if despesa.gera_estoque and despesa.parcelas_total > 1 and despesa.grupo_parcelamento_id:
+                messages.error(
+                    request,
+                    'Compra com estoque parcelada deve ser removida pelo botão "Excluir grupo".',
+                )
+                return _redirect_despesas(ano, mes)
+
+            with transaction.atomic():
+                if despesa.gera_estoque and despesa.compra_estoque:
+                    outras_despesas = DespesaSalao.objects.filter(compra_estoque=despesa.compra_estoque).exclude(
+                        id=despesa.id
+                    )
+                    if outras_despesas.exists():
+                        messages.error(
+                            request,
+                            'Essa compra possui outras parcelas. Use "Excluir grupo" para remover tudo.',
+                        )
+                        return _redirect_despesas(ano, mes)
+                    _reverter_compra_estoque(despesa.compra_estoque)
+
+                despesa.delete()
+
             messages.success(request, 'Despesa removida com sucesso.')
             return _redirect_despesas(ano, mes)
 
@@ -542,7 +751,19 @@ def despesas(request):
                 messages.error(request, 'Grupo de parcelamento inválido.')
                 return _redirect_despesas(ano, mes)
 
-            deleted_count, _ = DespesaSalao.objects.filter(grupo_parcelamento_id=grupo_uuid).delete()
+            with transaction.atomic():
+                despesas_grupo = DespesaSalao.objects.filter(grupo_parcelamento_id=grupo_uuid)
+                compras_ids = list(
+                    despesas_grupo.filter(gera_estoque=True, compra_estoque__isnull=False)
+                    .values_list('compra_estoque_id', flat=True)
+                    .distinct()
+                )
+                for compra_id in compras_ids:
+                    compra = CompraEstoqueSalao.objects.filter(id=compra_id).first()
+                    if compra:
+                        _reverter_compra_estoque(compra)
+                deleted_count, _ = despesas_grupo.delete()
+
             if deleted_count > 0:
                 messages.success(request, 'Grupo de despesas parceladas removido com sucesso.')
             else:
@@ -552,6 +773,12 @@ def despesas(request):
         if action == 'update_despesa':
             despesa_id = request.POST.get('despesa_id')
             despesa = get_object_or_404(DespesaSalao, id=despesa_id)
+            if despesa.gera_estoque:
+                messages.error(
+                    request,
+                    'Edição direta desativada para compras com estoque. Exclua e relance para manter o histórico.',
+                )
+                return _redirect_despesas(ano, mes)
 
             raw_data = request.POST.get('data')
             try:
@@ -583,7 +810,7 @@ def despesas(request):
     inicio_mes, fim_mes = _date_range_for_month(ano, mes)
     despesas_mes = (
         DespesaSalao.objects.filter(data__range=(inicio_mes, fim_mes))
-        .select_related('categoria')
+        .select_related('categoria', 'compra_estoque')
         .order_by('data', 'parcela_numero', 'id')[:300]
     )
 
@@ -599,6 +826,7 @@ def despesas(request):
         'month_options': MONTH_OPTIONS,
         'year_options': _build_year_options(),
         'categorias_ativas': categorias_ativas,
+        'produtos_ativos': produtos_ativos,
         'despesas_mes': despesas_mes,
         'edit_despesa': edit_despesa,
         'data_padrao': date(ano, mes, min(date.today().day, calendar.monthrange(ano, mes)[1])),
@@ -752,6 +980,286 @@ def categorias(request):
         'edit_categoria': edit_categoria,
     }
     return render(request, 'salao/categorias.html', context)
+
+
+@_salao_superuser_required
+def produtos(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'create_produto':
+            codigo = _normalize_codigo(request.POST.get('codigo'))
+            nome = (request.POST.get('nome') or '').strip()
+            unidade = _normalize_codigo(request.POST.get('unidade') or 'UN')
+            valor_venda_padrao = _parse_decimal(request.POST.get('valor_venda_padrao'))
+            estoque_minimo = _parse_decimal(request.POST.get('estoque_minimo'), quantize_pattern='0.001')
+            ativo = _parse_checkbox(request.POST.get('ativo'))
+
+            if not codigo or not nome:
+                messages.error(request, 'Informe código e nome do produto.')
+                return _redirect_produtos()
+            if valor_venda_padrao is None or valor_venda_padrao < Decimal('0.00'):
+                messages.error(request, 'Informe um valor de venda padrão válido.')
+                return _redirect_produtos()
+            if estoque_minimo is None or estoque_minimo < Decimal('0.000'):
+                messages.error(request, 'Informe um estoque mínimo válido.')
+                return _redirect_produtos()
+            if ProdutoSalao.objects.filter(codigo=codigo).exists():
+                messages.error(request, f'Já existe produto com código {codigo}.')
+                return _redirect_produtos()
+
+            ProdutoSalao.objects.create(
+                codigo=codigo,
+                nome=nome,
+                unidade=unidade,
+                valor_venda_padrao=valor_venda_padrao,
+                estoque_minimo=estoque_minimo,
+                ativo=ativo,
+            )
+            messages.success(request, 'Produto cadastrado com sucesso.')
+            return _redirect_produtos()
+
+        if action == 'update_produto':
+            produto_id = request.POST.get('produto_id')
+            produto = get_object_or_404(ProdutoSalao, id=produto_id)
+
+            codigo = _normalize_codigo(request.POST.get('codigo'))
+            nome = (request.POST.get('nome') or '').strip()
+            unidade = _normalize_codigo(request.POST.get('unidade') or 'UN')
+            valor_venda_padrao = _parse_decimal(request.POST.get('valor_venda_padrao'))
+            estoque_minimo = _parse_decimal(request.POST.get('estoque_minimo'), quantize_pattern='0.001')
+            ativo = _parse_checkbox(request.POST.get('ativo'))
+
+            if not codigo or not nome:
+                messages.error(request, 'Informe código e nome do produto.')
+                return _redirect_produtos()
+            if valor_venda_padrao is None or valor_venda_padrao < Decimal('0.00'):
+                messages.error(request, 'Informe um valor de venda padrão válido.')
+                return _redirect_produtos()
+            if estoque_minimo is None or estoque_minimo < Decimal('0.000'):
+                messages.error(request, 'Informe um estoque mínimo válido.')
+                return _redirect_produtos()
+            if ProdutoSalao.objects.exclude(id=produto.id).filter(codigo=codigo).exists():
+                messages.error(request, f'Já existe outro produto com código {codigo}.')
+                return _redirect_produtos()
+
+            produto.codigo = codigo
+            produto.nome = nome
+            produto.unidade = unidade
+            produto.valor_venda_padrao = valor_venda_padrao
+            produto.estoque_minimo = estoque_minimo
+            produto.ativo = ativo
+            produto.save(
+                update_fields=[
+                    'codigo',
+                    'nome',
+                    'unidade',
+                    'valor_venda_padrao',
+                    'estoque_minimo',
+                    'ativo',
+                    'atualizado_em',
+                ]
+            )
+            messages.success(request, 'Produto atualizado com sucesso.')
+            return _redirect_produtos()
+
+        if action == 'delete_produto':
+            produto_id = request.POST.get('produto_id')
+            produto = get_object_or_404(ProdutoSalao, id=produto_id)
+            try:
+                produto.delete()
+                messages.success(request, 'Produto removido com sucesso.')
+            except ProtectedError:
+                messages.error(
+                    request,
+                    'Não foi possível remover: há movimentações de estoque vinculadas a esse produto.',
+                )
+            return _redirect_produtos()
+
+    produtos_qs = ProdutoSalao.objects.all().order_by('codigo')
+    edit_id = request.GET.get('edit')
+    edit_produto = ProdutoSalao.objects.filter(id=edit_id).first() if edit_id else None
+
+    context = {
+        'active_tab': 'produtos',
+        'produtos': produtos_qs,
+        'edit_produto': edit_produto,
+    }
+    return render(request, 'salao/produtos.html', context)
+
+
+@_salao_superuser_required
+def estoque(request):
+    ano, mes = _parse_competencia(request)
+    produtos_ativos = list(ProdutoSalao.objects.filter(ativo=True).order_by('codigo'))
+    formas_pagamento_ativas = list(FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'))
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'create_saida_estoque':
+            raw_data = request.POST.get('data')
+            try:
+                ano_d, mes_d, dia_d = [int(part) for part in raw_data.split('-')]
+                data_movimento = date(ano_d, mes_d, dia_d)
+            except (TypeError, ValueError, AttributeError):
+                messages.error(request, 'Data inválida para saída de estoque.')
+                return _redirect_estoque(ano, mes)
+
+            produto_id = request.POST.get('produto_id')
+            produto = ProdutoSalao.objects.filter(id=produto_id, ativo=True).first()
+            if not produto:
+                messages.error(request, 'Selecione um produto ativo válido.')
+                return _redirect_estoque(ano, mes)
+
+            tipo_saida = (request.POST.get('tipo_saida') or '').strip().upper()
+            if tipo_saida not in ('VENDA', 'USO_EM_CLIENTE'):
+                messages.error(request, 'Selecione um tipo de saída válido.')
+                return _redirect_estoque(ano, mes)
+
+            quantidade = _parse_decimal(request.POST.get('quantidade'), quantize_pattern='0.001')
+            if quantidade is None or quantidade <= Decimal('0.000'):
+                messages.error(request, 'Informe uma quantidade válida para saída.')
+                return _redirect_estoque(ano, mes)
+
+            observacao = (request.POST.get('observacao') or '').strip()
+
+            with transaction.atomic():
+                produto_locked = ProdutoSalao.objects.select_for_update().get(id=produto.id)
+                if quantidade > produto_locked.saldo_atual:
+                    messages.error(
+                        request,
+                        f'Estoque insuficiente para {produto_locked.codigo}. Saldo atual: {produto_locked.saldo_atual}.',
+                    )
+                    return _redirect_estoque(ano, mes)
+
+                custo_unitario_aplicado = produto_locked.custo_medio_atual
+                valor_custo_total = _quantize_money(quantidade * custo_unitario_aplicado)
+                forma_pagamento = None
+                parcelas = 1
+                taxa_percentual = Decimal('0.00')
+                valor_venda_unitario = None
+                valor_bruto_venda = Decimal('0.00')
+                valor_taxa = Decimal('0.00')
+                valor_liquido_venda = Decimal('0.00')
+                lucro_produto = Decimal('0.00')
+                motivo = MovimentoEstoqueSalao.MOTIVO_USO_EM_CLIENTE
+
+                if tipo_saida == 'VENDA':
+                    forma_pagamento_id = request.POST.get('forma_pagamento_id')
+                    forma_pagamento = FormaPagamentoSalao.objects.filter(
+                        id=forma_pagamento_id, ativo=True
+                    ).first()
+                    if not forma_pagamento:
+                        messages.error(request, 'Selecione uma forma de pagamento ativa para venda.')
+                        return _redirect_estoque(ano, mes)
+
+                    parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
+                    if not forma_pagamento.aceita_parcelamento:
+                        parcelas = 1
+
+                    taxa = TaxaFormaPagamentoSalao.objects.filter(
+                        forma_pagamento=forma_pagamento,
+                        parcelas=parcelas,
+                    ).first()
+                    taxa_percentual = taxa.percentual if taxa else Decimal('0.00')
+
+                    valor_venda_unitario = _parse_decimal(request.POST.get('valor_venda_unitario'))
+                    if valor_venda_unitario is None or valor_venda_unitario < Decimal('0.00'):
+                        messages.error(request, 'Informe um valor de venda unitário válido.')
+                        return _redirect_estoque(ano, mes)
+
+                    valor_bruto_venda = _quantize_money(quantidade * valor_venda_unitario)
+                    valor_taxa, valor_liquido_venda = _calcular_liquido_com_taxa(
+                        valor_bruto_venda,
+                        taxa_percentual,
+                    )
+                    lucro_produto = _quantize_money(valor_liquido_venda - valor_custo_total)
+                    motivo = MovimentoEstoqueSalao.MOTIVO_VENDA
+
+                produto_locked.saldo_atual = _quantize_quantity(produto_locked.saldo_atual - quantidade)
+                produto_locked.save(update_fields=['saldo_atual', 'atualizado_em'])
+
+                MovimentoEstoqueSalao.objects.create(
+                    data=data_movimento,
+                    produto=produto_locked,
+                    tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+                    motivo=motivo,
+                    quantidade=quantidade,
+                    custo_unitario_aplicado=custo_unitario_aplicado,
+                    valor_custo_total=valor_custo_total,
+                    valor_venda_unitario=valor_venda_unitario,
+                    valor_bruto_venda=valor_bruto_venda,
+                    taxa_percentual_aplicada=taxa_percentual,
+                    valor_taxa=valor_taxa,
+                    valor_liquido_venda=valor_liquido_venda,
+                    lucro_produto=lucro_produto,
+                    forma_pagamento=forma_pagamento,
+                    parcelas=parcelas,
+                    observacao=observacao,
+                )
+
+            if tipo_saida == 'VENDA':
+                messages.success(
+                    request,
+                    f'Venda registrada. Líquido: R$ {valor_liquido_venda} | Lucro: R$ {lucro_produto}.',
+                )
+            else:
+                messages.success(request, 'Saída de uso em cliente registrada com sucesso.')
+            return _redirect_estoque(ano, mes)
+
+    inicio_mes, fim_mes = _date_range_for_month(ano, mes)
+    saidas_qs = (
+        MovimentoEstoqueSalao.objects.filter(
+            data__range=(inicio_mes, fim_mes),
+            tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+        )
+        .select_related('produto', 'forma_pagamento')
+        .order_by('-data', '-id')
+    )
+    saidas_mes = saidas_qs[:300]
+    produtos_saldo = ProdutoSalao.objects.filter(ativo=True).order_by('codigo')
+    produtos_alerta = produtos_saldo.filter(saldo_atual__lte=F('estoque_minimo'))
+    vendas_mes = saidas_qs.filter(motivo=MovimentoEstoqueSalao.MOTIVO_VENDA)
+    resumo_vendas_mes = vendas_mes.aggregate(
+        bruto=Sum('valor_bruto_venda'),
+        taxas=Sum('valor_taxa'),
+        liquido=Sum('valor_liquido_venda'),
+        custo=Sum('valor_custo_total'),
+        lucro=Sum('lucro_produto'),
+    )
+
+    context = {
+        'active_tab': 'estoque',
+        'ano': ano,
+        'mes': mes,
+        'month_options': MONTH_OPTIONS,
+        'year_options': _build_year_options(),
+        'data_padrao': date(ano, mes, min(date.today().day, calendar.monthrange(ano, mes)[1])),
+        'produtos_ativos': produtos_ativos,
+        'produtos_catalogo': [
+            {
+                'id': produto.id,
+                'codigo': produto.codigo,
+                'nome': produto.nome,
+                'valor_venda_padrao': str(produto.valor_venda_padrao),
+            }
+            for produto in produtos_ativos
+        ],
+        'formas_pagamento_ativas': formas_pagamento_ativas,
+        'formas_catalogo': _build_formas_catalogo(formas_pagamento_ativas),
+        'saidas_mes': saidas_mes,
+        'produtos_saldo': produtos_saldo,
+        'produtos_alerta': produtos_alerta,
+        'resumo_vendas_mes': {
+            'bruto': resumo_vendas_mes['bruto'] or Decimal('0.00'),
+            'taxas': resumo_vendas_mes['taxas'] or Decimal('0.00'),
+            'liquido': resumo_vendas_mes['liquido'] or Decimal('0.00'),
+            'custo': resumo_vendas_mes['custo'] or Decimal('0.00'),
+            'lucro': resumo_vendas_mes['lucro'] or Decimal('0.00'),
+        },
+    }
+    return render(request, 'salao/estoque.html', context)
 
 
 @_salao_superuser_required
@@ -924,11 +1432,28 @@ def dashboard(request):
 
     lancamentos_mes = LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
     despesas_mes = DespesaSalao.objects.filter(data__year=ano, data__month=mes)
+    vendas_produto_mes = MovimentoEstoqueSalao.objects.filter(
+        data__year=ano,
+        data__month=mes,
+        tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+        motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
+    )
 
     faturamento_liquido = lancamentos_mes.aggregate(total=Sum('valor_cobrado'))['total'] or Decimal('0.00')
     faturamento_bruto_cliente = lancamentos_mes.aggregate(total=Sum('valor_bruto'))['total'] or Decimal('0.00')
     taxas_total = lancamentos_mes.aggregate(total=Sum('valor_taxa'))['total'] or Decimal('0.00')
     despesas_total = despesas_mes.aggregate(total=Sum('valor'))['total'] or Decimal('0.00')
+    vendas_produto_brutas = (
+        vendas_produto_mes.aggregate(total=Sum('valor_bruto_venda'))['total'] or Decimal('0.00')
+    )
+    taxas_produto_total = vendas_produto_mes.aggregate(total=Sum('valor_taxa'))['total'] or Decimal('0.00')
+    vendas_produto_liquidas = (
+        vendas_produto_mes.aggregate(total=Sum('valor_liquido_venda'))['total'] or Decimal('0.00')
+    )
+    custo_produto_vendido = (
+        vendas_produto_mes.aggregate(total=Sum('valor_custo_total'))['total'] or Decimal('0.00')
+    )
+    lucro_produto = vendas_produto_mes.aggregate(total=Sum('lucro_produto'))['total'] or Decimal('0.00')
     atendimentos_total = lancamentos_mes.count()
     ticket_medio = (
         (faturamento_liquido / Decimal(atendimentos_total)).quantize(Decimal('0.01'))
@@ -972,6 +1497,10 @@ def dashboard(request):
         despesas_mes.values('categoria__nome')
         .annotate(total=Sum('valor'))
         .order_by('-total', 'categoria__nome')
+    )
+    produtos_alerta = (
+        ProdutoSalao.objects.filter(ativo=True, saldo_atual__lte=F('estoque_minimo'))
+        .order_by('saldo_atual', 'codigo')[:15]
     )
 
     serie_meses = _iter_months_backwards(ano, mes, quantidade=6)
@@ -1052,6 +1581,12 @@ def dashboard(request):
         'valor_faltante_meta': valor_faltante_meta,
         'atendimentos_total': atendimentos_total,
         'ticket_medio': ticket_medio,
+        'vendas_produto_brutas': vendas_produto_brutas,
+        'taxas_produto_total': taxas_produto_total,
+        'vendas_produto_liquidas': vendas_produto_liquidas,
+        'custo_produto_vendido': custo_produto_vendido,
+        'lucro_produto': lucro_produto,
+        'produtos_alerta': produtos_alerta,
         'ranking_servicos': ranking_servicos,
         'despesas_por_categoria': despesas_por_categoria,
         'meta_gauge_chart': {

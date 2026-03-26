@@ -1,0 +1,113 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Produtos | Salão{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+    <div class="col-12 col-lg-5">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title mb-3">
+                    {% if edit_produto %}Editar Produto #{{ edit_produto.id }}{% else %}Novo Produto{% endif %}
+                </h5>
+                <form method="post" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    {% if edit_produto %}
+                        <input type="hidden" name="action" value="update_produto">
+                        <input type="hidden" name="produto_id" value="{{ edit_produto.id }}">
+                    {% else %}
+                        <input type="hidden" name="action" value="create_produto">
+                    {% endif %}
+
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Código</label>
+                        <input class="form-control" name="codigo" maxlength="20" required value="{% if edit_produto %}{{ edit_produto.codigo }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-8">
+                        <label class="form-label">Nome</label>
+                        <input class="form-control" name="nome" maxlength="140" required value="{% if edit_produto %}{{ edit_produto.nome }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Unidade</label>
+                        <input class="form-control" name="unidade" maxlength="20" placeholder="UN" value="{% if edit_produto %}{{ edit_produto.unidade }}{% else %}UN{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Venda padrão</label>
+                        <input class="form-control" name="valor_venda_padrao" inputmode="decimal" placeholder="0,00" required value="{% if edit_produto %}{{ edit_produto.valor_venda_padrao }}{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Estoque mínimo</label>
+                        <input class="form-control" name="estoque_minimo" inputmode="decimal" placeholder="0,000" required value="{% if edit_produto %}{{ edit_produto.estoque_minimo }}{% else %}0,000{% endif %}">
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" name="ativo" id="id_ativo_produto" {% if edit_produto %}{% if edit_produto.ativo %}checked{% endif %}{% else %}checked{% endif %}>
+                            <label class="form-check-label" for="id_ativo_produto">Ativo</label>
+                        </div>
+                    </div>
+                    <div class="col-12 d-grid mt-2">
+                        <button class="btn btn-primary" type="submit">
+                            {% if edit_produto %}Salvar produto{% else %}Cadastrar produto{% endif %}
+                        </button>
+                    </div>
+                    {% if edit_produto %}
+                    <div class="col-12 d-grid">
+                        <a class="btn btn-outline-secondary" href="{% url 'salao:produtos' %}">Cancelar edição</a>
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Produtos cadastrados</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Produto</th>
+                                <th class="text-center">Unid.</th>
+                                <th class="text-end">Saldo</th>
+                                <th class="text-end">Custo médio</th>
+                                <th class="text-end">Venda padrão</th>
+                                <th class="text-end">Mínimo</th>
+                                <th class="text-center">Status</th>
+                                <th class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for produto in produtos %}
+                            <tr>
+                                <td>{{ produto.codigo }}</td>
+                                <td>{{ produto.nome }}</td>
+                                <td class="text-center">{{ produto.unidade }}</td>
+                                <td class="text-end">{{ produto.saldo_atual|floatformat:3 }}</td>
+                                <td class="text-end">R$ {{ produto.custo_medio_atual|floatformat:2 }}</td>
+                                <td class="text-end">R$ {{ produto.valor_venda_padrao|floatformat:2 }}</td>
+                                <td class="text-end">{{ produto.estoque_minimo|floatformat:3 }}</td>
+                                <td class="text-center">{% if produto.ativo %}Ativo{% else %}Inativo{% endif %}</td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:produtos' %}?edit={{ produto.id }}">Editar</a>
+                                    <form method="post" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_produto">
+                                        <input type="hidden" name="produto_id" value="{{ produto.id }}">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="9" class="text-center text-muted py-4">Nenhum produto cadastrado.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -142,12 +142,136 @@ class CategoriaDespesaSalao(models.Model):
         return self.nome
 
 
+class ProdutoSalao(models.Model):
+    codigo = models.CharField(max_length=20, unique=True)
+    nome = models.CharField(max_length=140)
+    unidade = models.CharField(max_length=20, default='UN')
+    valor_venda_padrao = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    estoque_minimo = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        default=Decimal('0.000'),
+        validators=[MinValueValidator(Decimal('0.000'))],
+    )
+    saldo_atual = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        default=Decimal('0.000'),
+        validators=[MinValueValidator(Decimal('0.000'))],
+    )
+    custo_medio_atual = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Produto do Salão'
+        verbose_name_plural = 'Produtos do Salão'
+        ordering = ['codigo']
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nome}"
+
+    def save(self, *args, **kwargs):
+        self.codigo = (self.codigo or '').strip().upper()
+        self.unidade = (self.unidade or '').strip().upper() or 'UN'
+        super().save(*args, **kwargs)
+
+
+class CompraEstoqueSalao(models.Model):
+    data = models.DateField(db_index=True)
+    categoria_fornecedor = models.ForeignKey(
+        CategoriaDespesaSalao,
+        on_delete=models.PROTECT,
+        related_name='compras_estoque',
+    )
+    valor_total = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    parcelas_total = models.PositiveSmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+    )
+    grupo_parcelamento_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    observacao = models.TextField(blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Compra de Estoque do Salão'
+        verbose_name_plural = 'Compras de Estoque do Salão'
+        ordering = ['-data', '-id']
+
+    def __str__(self):
+        return f"{self.data} - {self.categoria_fornecedor.nome} - R$ {self.valor_total}"
+
+
+class CompraEstoqueItemSalao(models.Model):
+    compra = models.ForeignKey(
+        CompraEstoqueSalao,
+        on_delete=models.CASCADE,
+        related_name='itens',
+    )
+    produto = models.ForeignKey(
+        ProdutoSalao,
+        on_delete=models.PROTECT,
+        related_name='itens_compra',
+    )
+    quantidade = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        validators=[MinValueValidator(Decimal('0.001'))],
+    )
+    custo_unitario = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    custo_total = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+
+    class Meta:
+        verbose_name = 'Item de Compra de Estoque do Salão'
+        verbose_name_plural = 'Itens de Compra de Estoque do Salão'
+        ordering = ['compra_id', 'id']
+
+    def __str__(self):
+        return f"{self.produto.codigo} - {self.quantidade} x R$ {self.custo_unitario}"
+
+
 class DespesaSalao(models.Model):
     data = models.DateField(db_index=True)
     categoria = models.ForeignKey(
         CategoriaDespesaSalao,
         on_delete=models.PROTECT,
         related_name='despesas',
+    )
+    gera_estoque = models.BooleanField(default=False)
+    compra_estoque = models.ForeignKey(
+        CompraEstoqueSalao,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='despesas_financeiras',
     )
     valor = models.DecimalField(
         max_digits=10,
@@ -178,6 +302,116 @@ class DespesaSalao(models.Model):
 
     def __str__(self):
         return f"{self.data} - {self.categoria.nome} - R$ {self.valor}"
+
+
+class MovimentoEstoqueSalao(models.Model):
+    TIPO_ENTRADA = 'ENTRADA'
+    TIPO_SAIDA = 'SAIDA'
+    TIPO_CHOICES = (
+        (TIPO_ENTRADA, 'Entrada'),
+        (TIPO_SAIDA, 'Saída'),
+    )
+
+    MOTIVO_COMPRA = 'COMPRA'
+    MOTIVO_VENDA = 'VENDA'
+    MOTIVO_USO_EM_CLIENTE = 'USO_EM_CLIENTE'
+    MOTIVO_AJUSTE = 'AJUSTE'
+    MOTIVO_CHOICES = (
+        (MOTIVO_COMPRA, 'Compra'),
+        (MOTIVO_VENDA, 'Venda'),
+        (MOTIVO_USO_EM_CLIENTE, 'Uso em Cliente'),
+        (MOTIVO_AJUSTE, 'Ajuste'),
+    )
+
+    data = models.DateField(db_index=True)
+    produto = models.ForeignKey(
+        ProdutoSalao,
+        on_delete=models.PROTECT,
+        related_name='movimentos',
+    )
+    tipo = models.CharField(max_length=10, choices=TIPO_CHOICES)
+    motivo = models.CharField(max_length=20, choices=MOTIVO_CHOICES)
+    quantidade = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        validators=[MinValueValidator(Decimal('0.001'))],
+    )
+    custo_unitario_aplicado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    valor_custo_total = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    valor_venda_unitario = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    valor_bruto_venda = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    taxa_percentual_aplicada = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('100.00'))],
+    )
+    valor_taxa = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    valor_liquido_venda = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    lucro_produto = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+    )
+    forma_pagamento = models.ForeignKey(
+        FormaPagamentoSalao,
+        on_delete=models.PROTECT,
+        related_name='movimentos_estoque',
+        null=True,
+        blank=True,
+    )
+    parcelas = models.PositiveSmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+    )
+    compra_estoque = models.ForeignKey(
+        CompraEstoqueSalao,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='movimentos_entrada',
+    )
+    observacao = models.TextField(blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Movimento de Estoque do Salão'
+        verbose_name_plural = 'Movimentos de Estoque do Salão'
+        ordering = ['-data', '-id']
+
+    def __str__(self):
+        return f"{self.data} - {self.produto.codigo} - {self.tipo} - {self.quantidade}"
 
 
 class ComissaoMensalSalao(models.Model):

@@ -354,7 +354,7 @@
     <div class="salao-header">
         <div>
             <h1 class="salao-title">Controle do Salão</h1>
-            <p class="salao-subtitle">Lançamentos rápidos, despesas e visão mensal</p>
+            <p class="salao-subtitle">Lançamentos rápidos, despesas, produtos e visão mensal</p>
         </div>
         <a href="/admin/" class="btn btn-outline-secondary btn-sm">Admin</a>
     </div>
@@ -363,6 +363,8 @@
         <li class="nav-item"><a class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}" href="{% url 'salao:dashboard' %}">Dashboard</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'lancamentos' %}active{% endif %}" href="{% url 'salao:lancamentos' %}">Lançamentos</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'despesas' %}active{% endif %}" href="{% url 'salao:despesas' %}">Despesas</a></li>
+        <li class="nav-item"><a class="nav-link {% if active_tab == 'produtos' %}active{% endif %}" href="{% url 'salao:produtos' %}">Produtos</a></li>
+        <li class="nav-item"><a class="nav-link {% if active_tab == 'estoque' %}active{% endif %}" href="{% url 'salao:estoque' %}">Estoque</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'pagamentos' %}active{% endif %}" href="{% url 'salao:pagamentos' %}">Pagamentos</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'servicos' %}active{% endif %}" href="{% url 'salao:servicos' %}">Serviços</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'categorias' %}active{% endif %}" href="{% url 'salao:categorias' %}">Categorias</a></li>

@@ -1,0 +1,330 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Estoque | Salão{% endblock %}
+
+{% block content %}
+{{ formas_catalogo|json_script:'formas-catalogo-json' }}
+{{ produtos_catalogo|json_script:'produtos-catalogo-json' }}
+<div class="row g-3">
+    <div class="col-12 col-xl-5">
+        <div class="card card-soft mb-3">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Saída de Estoque</h5>
+
+                <form method="get" class="row g-2 align-items-end mb-3">
+                    <div class="col-6 col-md-4">
+                        <label class="form-label">Mês</label>
+                        <select class="form-select" name="mes">
+                            {% for value, label in month_options %}
+                                <option value="{{ value }}" {% if mes == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-4">
+                        <label class="form-label">Ano</label>
+                        <select class="form-select" name="ano">
+                            {% for year in year_options %}
+                                <option value="{{ year }}" {% if ano == year %}selected{% endif %}>{{ year }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-4 d-grid">
+                        <button class="btn btn-primary" type="submit">Trocar competência</button>
+                    </div>
+                </form>
+
+                <form method="post" id="saida-estoque-form" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create_saida_estoque">
+                    <input type="hidden" name="mes" value="{{ mes }}">
+                    <input type="hidden" name="ano" value="{{ ano }}">
+
+                    <div class="col-md-4">
+                        <label class="form-label">Data</label>
+                        <input class="form-control" type="date" name="data" value="{{ data_padrao|date:'Y-m-d' }}" required>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Produto</label>
+                        <select class="form-select" name="produto_id" id="id_produto_saida" required>
+                            <option value="">Selecione</option>
+                            {% for produto in produtos_ativos %}
+                                <option value="{{ produto.id }}">
+                                    {{ produto.codigo }} - {{ produto.nome }} (Saldo: {{ produto.saldo_atual|floatformat:3 }} {{ produto.unidade }})
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Tipo de saída</label>
+                        <select class="form-select" name="tipo_saida" id="id_tipo_saida" required>
+                            <option value="USO_EM_CLIENTE">Uso</option>
+                            <option value="VENDA">Venda</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Quantidade</label>
+                        <input class="form-control" name="quantidade" inputmode="decimal" placeholder="0,000" required>
+                    </div>
+                    <div class="col-md-4 js-venda-field d-none">
+                        <label class="form-label">Venda unitária</label>
+                        <input class="form-control" id="id_valor_venda_unitario" name="valor_venda_unitario" inputmode="decimal" placeholder="0,00">
+                    </div>
+                    <div class="col-md-6 js-venda-field d-none">
+                        <label class="form-label">Forma de pagamento</label>
+                        <select class="form-select" id="id_forma_pagamento_saida" name="forma_pagamento_id">
+                            <option value="">Selecione</option>
+                            {% for forma in formas_pagamento_ativas %}
+                                <option value="{{ forma.id }}">{{ forma.codigo }} - {{ forma.nome }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3 js-venda-field d-none">
+                        <label class="form-label">Parcelas</label>
+                        <input class="form-control" id="id_parcelas_saida" name="parcelas" type="number" min="1" max="12" value="1">
+                    </div>
+                    <div class="col-12 js-venda-field d-none">
+                        <div class="small text-muted" id="taxa-preview"></div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Observação</label>
+                        <input class="form-control" name="observacao" maxlength="500" placeholder="Opcional">
+                    </div>
+                    <div class="col-12 d-grid mt-2">
+                        <button class="btn btn-primary" type="submit">Registrar saída</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Resumo de vendas de produto ({{ mes }}/{{ ano }})</h5>
+                <div class="table-wrap mt-2">
+                    <table class="table table-sm mb-0">
+                        <tbody>
+                            <tr><th>Vendas brutas</th><td class="text-end">R$ {{ resumo_vendas_mes.bruto|floatformat:2 }}</td></tr>
+                            <tr><th>Taxas</th><td class="text-end">R$ {{ resumo_vendas_mes.taxas|floatformat:2 }}</td></tr>
+                            <tr><th>Vendas líquidas</th><td class="text-end">R$ {{ resumo_vendas_mes.liquido|floatformat:2 }}</td></tr>
+                            <tr><th>Custo das saídas</th><td class="text-end">R$ {{ resumo_vendas_mes.custo|floatformat:2 }}</td></tr>
+                            <tr><th>Lucro de produto</th><td class="text-end">R$ {{ resumo_vendas_mes.lucro|floatformat:2 }}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-xl-7">
+        <div class="card card-soft mb-3">
+            <div class="card-body">
+                <h5 class="card-title">Produtos abaixo do estoque mínimo</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Produto</th>
+                                <th class="text-end">Saldo</th>
+                                <th class="text-end">Mínimo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for produto in produtos_alerta %}
+                            <tr>
+                                <td>{{ produto.codigo }}</td>
+                                <td>{{ produto.nome }}</td>
+                                <td class="text-end text-danger fw-bold">{{ produto.saldo_atual|floatformat:3 }}</td>
+                                <td class="text-end">{{ produto.estoque_minimo|floatformat:3 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-center text-muted py-3">Nenhum produto em alerta.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-soft mb-3">
+            <div class="card-body">
+                <h5 class="card-title">Saldos atuais</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Produto</th>
+                                <th class="text-center">Unidade</th>
+                                <th class="text-end">Saldo</th>
+                                <th class="text-end">Mínimo</th>
+                                <th class="text-end">Custo médio</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for produto in produtos_saldo %}
+                            <tr>
+                                <td>{{ produto.codigo }}</td>
+                                <td>{{ produto.nome }}</td>
+                                <td class="text-center">{{ produto.unidade }}</td>
+                                <td class="text-end {% if produto.saldo_atual <= produto.estoque_minimo %}text-danger fw-bold{% endif %}">
+                                    {{ produto.saldo_atual|floatformat:3 }}
+                                </td>
+                                <td class="text-end">{{ produto.estoque_minimo|floatformat:3 }}</td>
+                                <td class="text-end">R$ {{ produto.custo_medio_atual|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="6" class="text-center text-muted py-3">Sem produtos ativos.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Saídas da competência {{ mes }}/{{ ano }}</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th>Produto</th>
+                                <th>Tipo</th>
+                                <th class="text-end">Qtd</th>
+                                <th class="text-end">Custo</th>
+                                <th class="text-end">Líquido venda</th>
+                                <th class="text-end">Lucro</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for mov in saidas_mes %}
+                            <tr>
+                                <td>{{ mov.data|date:'d/m/Y' }}</td>
+                                <td>{{ mov.produto.codigo }} - {{ mov.produto.nome }}</td>
+                                <td>
+                                    {% if mov.motivo == 'VENDA' %}Venda{% else %}Uso em cliente{% endif %}
+                                    {% if mov.forma_pagamento %}<div class="small text-muted">{{ mov.forma_pagamento.nome }} {{ mov.parcelas }}x</div>{% endif %}
+                                </td>
+                                <td class="text-end">{{ mov.quantidade|floatformat:3 }}</td>
+                                <td class="text-end">R$ {{ mov.valor_custo_total|floatformat:2 }}</td>
+                                <td class="text-end">R$ {{ mov.valor_liquido_venda|floatformat:2 }}</td>
+                                <td class="text-end">R$ {{ mov.lucro_produto|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="7" class="text-center text-muted py-3">Sem saídas no período.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const form = document.getElementById('saida-estoque-form');
+    if (!form) return;
+
+    const formasNode = document.getElementById('formas-catalogo-json');
+    const produtosNode = document.getElementById('produtos-catalogo-json');
+    const formas = formasNode ? JSON.parse(formasNode.textContent) : [];
+    const produtos = produtosNode ? JSON.parse(produtosNode.textContent) : [];
+    const byFormaId = {};
+    const byProdutoId = {};
+    formas.forEach((forma) => { byFormaId[String(forma.id)] = forma; });
+    produtos.forEach((produto) => { byProdutoId[String(produto.id)] = produto; });
+
+    const tipoSaida = document.getElementById('id_tipo_saida');
+    const vendaFields = form.querySelectorAll('.js-venda-field');
+    const valorVendaInput = document.getElementById('id_valor_venda_unitario');
+    const formaPagamentoSelect = document.getElementById('id_forma_pagamento_saida');
+    const parcelasInput = document.getElementById('id_parcelas_saida');
+    const produtoSelect = document.getElementById('id_produto_saida');
+    const taxaPreview = document.getElementById('taxa-preview');
+
+    const parseDecimal = (value) => {
+        const parsed = Number(String(value || '').replace(',', '.'));
+        return Number.isNaN(parsed) ? null : parsed;
+    };
+
+    const formatDecimal = (value) => {
+        return Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const getTaxa = () => {
+        const forma = byFormaId[String(formaPagamentoSelect.value || '')];
+        if (!forma) return null;
+        let parcelas = Number(parcelasInput.value || 1);
+        if (!forma.aceita_parcelamento) {
+            parcelas = 1;
+            parcelasInput.value = '1';
+            parcelasInput.setAttribute('readonly', 'readonly');
+        } else {
+            parcelasInput.removeAttribute('readonly');
+            if (parcelas < 1) parcelas = 1;
+        }
+        const taxa = forma.taxas && Object.prototype.hasOwnProperty.call(forma.taxas, String(parcelas))
+            ? parseDecimal(forma.taxas[String(parcelas)])
+            : 0;
+        return { taxa, forma, parcelas };
+    };
+
+    const updateTaxaPreview = () => {
+        if (tipoSaida.value !== 'VENDA') {
+            taxaPreview.textContent = '';
+            return;
+        }
+        const data = getTaxa();
+        if (!data) {
+            taxaPreview.textContent = 'Selecione forma de pagamento para aplicar taxa.';
+            return;
+        }
+        if (data.taxa === 0) {
+            taxaPreview.textContent = `Taxa aplicada: 0,00% (${data.forma.nome} ${data.parcelas}x).`;
+            return;
+        }
+        taxaPreview.textContent = `Taxa aplicada: ${formatDecimal(data.taxa)}% (${data.forma.nome} ${data.parcelas}x).`;
+    };
+
+    const toggleVendaFields = () => {
+        const isVenda = tipoSaida.value === 'VENDA';
+        vendaFields.forEach((field) => field.classList.toggle('d-none', !isVenda));
+        valorVendaInput.required = isVenda;
+        formaPagamentoSelect.required = isVenda;
+        if (!isVenda) {
+            taxaPreview.textContent = '';
+            return;
+        }
+        updateTaxaPreview();
+    };
+
+    const prefillValorVenda = () => {
+        const produto = byProdutoId[String(produtoSelect.value || '')];
+        if (!produto || tipoSaida.value !== 'VENDA') return;
+        if (!valorVendaInput.value) {
+            valorVendaInput.value = formatDecimal(parseDecimal(produto.valor_venda_padrao || 0) || 0);
+        }
+    };
+
+    tipoSaida.addEventListener('change', () => {
+        if (tipoSaida.value !== 'VENDA') {
+            valorVendaInput.value = '';
+            formaPagamentoSelect.value = '';
+            parcelasInput.value = '1';
+        } else {
+            prefillValorVenda();
+        }
+        toggleVendaFields();
+    });
+    formaPagamentoSelect.addEventListener('change', updateTaxaPreview);
+    parcelasInput.addEventListener('change', updateTaxaPreview);
+    produtoSelect.addEventListener('change', prefillValorVenda);
+
+    toggleVendaFields();
+})();
+</script>
+{% endblock %}

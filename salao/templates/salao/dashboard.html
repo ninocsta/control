@@ -164,6 +164,44 @@
     </div>
 </div>
 
+<div class="card card-soft mb-3">
+    <div class="card-body">
+        <h5 class="card-title mb-3">Produtos (separado de serviços)</h5>
+        <div class="row g-3">
+            <div class="col-6 col-lg-2">
+                <div class="kpi-card">
+                    <h6>Venda Bruta Produto</h6>
+                    <p class="kpi-value">R$ {{ vendas_produto_brutas|floatformat:2 }}</p>
+                </div>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="kpi-card">
+                    <h6>Taxa Produto</h6>
+                    <p class="kpi-value">R$ {{ taxas_produto_total|floatformat:2 }}</p>
+                </div>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="kpi-card">
+                    <h6>Venda Líquida Produto</h6>
+                    <p class="kpi-value">R$ {{ vendas_produto_liquidas|floatformat:2 }}</p>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="kpi-card">
+                    <h6>Custo das Saídas</h6>
+                    <p class="kpi-value">R$ {{ custo_produto_vendido|floatformat:2 }}</p>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="kpi-card">
+                    <h6>Lucro Produto</h6>
+                    <p class="kpi-value">R$ {{ lucro_produto|floatformat:2 }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row g-3 mb-3">
     <div class="col-12 col-xl-8">
         <div class="card card-soft chart-card">
@@ -268,6 +306,38 @@
                     </table>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+
+<div class="card card-soft mt-3">
+    <div class="card-body">
+        <h5 class="card-title">Alertas de Reposição (Estoque Mínimo)</h5>
+        <div class="table-wrap mt-3">
+            <table class="table table-sm table-mobile">
+                <thead>
+                    <tr>
+                        <th>Código</th>
+                        <th>Produto</th>
+                        <th class="text-end">Saldo</th>
+                        <th class="text-end">Mínimo</th>
+                        <th class="text-end">Custo médio</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for produto in produtos_alerta %}
+                    <tr>
+                        <td>{{ produto.codigo }}</td>
+                        <td>{{ produto.nome }}</td>
+                        <td class="text-end text-danger fw-bold">{{ produto.saldo_atual|floatformat:3 }}</td>
+                        <td class="text-end">{{ produto.estoque_minimo|floatformat:3 }}</td>
+                        <td class="text-end">R$ {{ produto.custo_medio_atual|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="5" class="text-center text-muted py-4">Nenhum produto em alerta.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
