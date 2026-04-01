@@ -11,6 +11,11 @@ urlpatterns = [
     path('produtos/', views.produtos, name='produtos'),
     path('estoque/', views.estoque, name='estoque'),
     path('dashboard/', views.dashboard, name='dashboard'),
+    path(
+        'dashboard/relatorio-lancamentos/',
+        views.dashboard_relatorio_lancamentos,
+        name='dashboard_relatorio_lancamentos',
+    ),
     path('servicos/', views.servicos, name='servicos'),
     path('categorias/', views.categorias, name='categorias'),
     path('pagamentos/', views.pagamentos, name='pagamentos'),

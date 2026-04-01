@@ -4,12 +4,14 @@ import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
 from django.db import transaction
 from django.db.models import Count, F, Sum
 from django.db.models.deletion import ProtectedError
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -1633,3 +1635,98 @@ def dashboard(request):
         },
     }
     return render(request, 'salao/dashboard.html', context)
+
+
+@_salao_superuser_required
+def dashboard_relatorio_lancamentos(request):
+    ano, mes = _parse_competencia(request)
+    comissao_percentual = Decimal('20.00')
+    fator_pos_comissao = (Decimal('100.00') - comissao_percentual) / Decimal('100.00')
+
+    lancamentos_mes = (
+        LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
+        .select_related('servico', 'forma_pagamento')
+        .order_by('data', 'id')
+    )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = f"Lancamentos {mes:02d}-{ano}"
+
+    headers = [
+        'Data',
+        'Servico',
+        'Forma de pagamento',
+        'Valor',
+        'Valor taxa',
+        'Valor liquido',
+        'Valor 20%',
+        'Valor apos 20%',
+    ]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+
+    total_valor = Decimal('0.00')
+    total_taxa = Decimal('0.00')
+    total_liquido = Decimal('0.00')
+    total_20 = Decimal('0.00')
+    total_pos_20 = Decimal('0.00')
+
+    for lancamento in lancamentos_mes:
+        valor = lancamento.valor_bruto or Decimal('0.00')
+        valor_taxa = lancamento.valor_taxa or Decimal('0.00')
+        valor_liquido = lancamento.valor_cobrado or Decimal('0.00')
+        valor_20 = (valor_liquido * comissao_percentual / Decimal('100.00')).quantize(
+            Decimal('0.01'),
+            rounding=ROUND_HALF_UP,
+        )
+        valor_pos_20 = (valor_liquido * fator_pos_comissao).quantize(
+            Decimal('0.01'),
+            rounding=ROUND_HALF_UP,
+        )
+        total_valor += valor
+        total_taxa += valor_taxa
+        total_liquido += valor_liquido
+        total_20 += valor_20
+        total_pos_20 += valor_pos_20
+        sheet.append(
+            [
+                lancamento.data.strftime('%d/%m/%Y'),
+                lancamento.servico.nome if lancamento.servico else '',
+                lancamento.forma_pagamento.nome if lancamento.forma_pagamento else 'Nao informado',
+                float(valor),
+                float(valor_taxa),
+                float(valor_liquido),
+                float(valor_20),
+                float(valor_pos_20),
+            ]
+        )
+
+    total_row_idx = sheet.max_row + 2
+    sheet.cell(row=total_row_idx, column=1, value='TOTAL')
+    sheet.cell(row=total_row_idx, column=4, value=float(total_valor))
+    sheet.cell(row=total_row_idx, column=5, value=float(total_taxa))
+    sheet.cell(row=total_row_idx, column=6, value=float(total_liquido))
+    sheet.cell(row=total_row_idx, column=7, value=float(total_20))
+    sheet.cell(row=total_row_idx, column=8, value=float(total_pos_20))
+    for col in (1, 4, 5, 6, 7, 8):
+        sheet.cell(row=total_row_idx, column=col).font = Font(bold=True)
+
+    sheet.column_dimensions['A'].width = 13
+    sheet.column_dimensions['B'].width = 26
+    sheet.column_dimensions['C'].width = 22
+    sheet.column_dimensions['D'].width = 13
+    sheet.column_dimensions['E'].width = 13
+    sheet.column_dimensions['F'].width = 13
+    sheet.column_dimensions['G'].width = 13
+    sheet.column_dimensions['H'].width = 16
+
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = (
+        f'attachment; filename="relatorio_lancamentos_{ano}_{mes:02d}.xlsx"'
+    )
+    workbook.save(response)
+    return response

@@ -82,6 +82,11 @@
                     <div class="col-12 col-md-4 d-grid">
                         <button class="btn btn-primary" type="submit">Atualizar visão</button>
                     </div>
+                    <div class="col-12 col-md-4 d-grid">
+                        <a class="btn btn-primary" href="{% url 'salao:dashboard_relatorio_lancamentos' %}?ano={{ ano }}&mes={{ mes }}">
+                            Relatório Excel
+                        </a>
+                    </div>
                     <div class="col-12 col-md-2 d-flex align-items-center">
                         <span class="kpi-badge">Comissão {{ comissao_percentual }}%</span>
                     </div>
