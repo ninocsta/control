@@ -1,4 +1,5 @@
 import calendar
+import re
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -29,6 +30,7 @@ from .models import (
 
 
 MONTH_OPTIONS = [(m, f"{m:02d}") for m in range(1, 13)]
+_CODIGO_NUMERIC_CHUNKS_RE = re.compile(r'(\d+)')
 
 
 def _salao_superuser_required(view_func):
@@ -40,6 +42,16 @@ def _salao_superuser_required(view_func):
 
 def _normalize_codigo(value: str) -> str:
     return (value or '').strip().upper()
+
+
+def _codigo_natural_sort_key(value: str):
+    normalized = (value or '').strip().upper()
+    parts = _CODIGO_NUMERIC_CHUNKS_RE.split(normalized)
+    return [(0, int(part)) if part.isdigit() else (1, part) for part in parts]
+
+
+def _sort_produtos_por_codigo_natural(produtos):
+    return sorted(produtos, key=lambda produto: _codigo_natural_sort_key(produto.codigo))
 
 
 def _parse_competencia(request):
@@ -637,7 +649,9 @@ def despesas(request):
     categorias_ativas = list(
         CategoriaDespesaSalao.objects.filter(ativo=True).order_by('nome')
     )
-    produtos_ativos = list(ProdutoSalao.objects.filter(ativo=True).order_by('codigo'))
+    produtos_ativos = _sort_produtos_por_codigo_natural(
+        list(ProdutoSalao.objects.filter(ativo=True))
+    )
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -1076,7 +1090,7 @@ def produtos(request):
                 )
             return _redirect_produtos()
 
-    produtos_qs = ProdutoSalao.objects.all().order_by('codigo')
+    produtos_qs = _sort_produtos_por_codigo_natural(list(ProdutoSalao.objects.all()))
     edit_id = request.GET.get('edit')
     edit_produto = ProdutoSalao.objects.filter(id=edit_id).first() if edit_id else None
 
@@ -1091,7 +1105,9 @@ def produtos(request):
 @_salao_superuser_required
 def estoque(request):
     ano, mes = _parse_competencia(request)
-    produtos_ativos = list(ProdutoSalao.objects.filter(ativo=True).order_by('codigo'))
+    produtos_ativos = _sort_produtos_por_codigo_natural(
+        list(ProdutoSalao.objects.filter(ativo=True))
+    )
     formas_pagamento_ativas = list(FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'))
 
     if request.method == 'POST':
@@ -1117,7 +1133,7 @@ def estoque(request):
                 messages.error(request, 'Selecione um tipo de saída válido.')
                 return _redirect_estoque(ano, mes)
 
-            quantidade = _parse_decimal(request.POST.get('quantidade'), quantize_pattern='0.001')
+            quantidade = _parse_decimal(request.POST.get('quantidade') or '1', quantize_pattern='0.001')
             if quantidade is None or quantidade <= Decimal('0.000'):
                 messages.error(request, 'Informe uma quantidade válida para saída.')
                 return _redirect_estoque(ano, mes)
@@ -1218,8 +1234,10 @@ def estoque(request):
         .order_by('-data', '-id')
     )
     saidas_mes = saidas_qs[:300]
-    produtos_saldo = ProdutoSalao.objects.filter(ativo=True).order_by('codigo')
-    produtos_alerta = produtos_saldo.filter(saldo_atual__lte=F('estoque_minimo'))
+    produtos_saldo = _sort_produtos_por_codigo_natural(
+        list(ProdutoSalao.objects.filter(ativo=True))
+    )
+    produtos_alerta = [produto for produto in produtos_saldo if produto.saldo_atual <= produto.estoque_minimo]
     vendas_mes = saidas_qs.filter(motivo=MovimentoEstoqueSalao.MOTIVO_VENDA)
     resumo_vendas_mes = vendas_mes.aggregate(
         bruto=Sum('valor_bruto_venda'),

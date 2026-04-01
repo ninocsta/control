@@ -99,6 +99,57 @@
             color: #fff;
         }
 
+        .cadastros-dropdown {
+            position: relative;
+        }
+
+        .cadastros-dropdown summary {
+            list-style: none;
+            cursor: pointer;
+        }
+
+        .cadastros-dropdown summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .cadastros-dropdown-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            min-width: 210px;
+            background: #fff;
+            border-radius: 14px;
+            box-shadow: var(--card-shadow);
+            padding: 8px;
+            z-index: 30;
+            display: none;
+        }
+
+        .cadastros-dropdown[open] .cadastros-dropdown-menu {
+            display: block;
+        }
+
+        .cadastros-dropdown-item {
+            display: block;
+            width: 100%;
+            text-decoration: none;
+            color: var(--text-main);
+            font-family: "Nunito", sans-serif;
+            font-weight: 700;
+            border-radius: 10px;
+            padding: .45rem .7rem;
+        }
+
+        .cadastros-dropdown-item:hover {
+            background: #fff1f5;
+            color: var(--brand-strong);
+        }
+
+        .cadastros-dropdown-item.active {
+            background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+            color: #fff;
+        }
+
         .kpi-card h6 {
             color: var(--text-muted);
             font-size: .78rem;
@@ -328,6 +379,13 @@
                 flex: 0 0 auto;
             }
 
+            .cadastros-dropdown-menu {
+                position: static;
+                margin-top: 6px;
+                box-shadow: none;
+                border: 1px solid #f0d6de;
+            }
+
             .table-wrap {
                 margin: 0 -4px;
                 padding: 0 4px;
@@ -363,11 +421,20 @@
         <li class="nav-item"><a class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}" href="{% url 'salao:dashboard' %}">Dashboard</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'lancamentos' %}active{% endif %}" href="{% url 'salao:lancamentos' %}">Lançamentos</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'despesas' %}active{% endif %}" href="{% url 'salao:despesas' %}">Despesas</a></li>
-        <li class="nav-item"><a class="nav-link {% if active_tab == 'produtos' %}active{% endif %}" href="{% url 'salao:produtos' %}">Produtos</a></li>
         <li class="nav-item"><a class="nav-link {% if active_tab == 'estoque' %}active{% endif %}" href="{% url 'salao:estoque' %}">Estoque</a></li>
-        <li class="nav-item"><a class="nav-link {% if active_tab == 'pagamentos' %}active{% endif %}" href="{% url 'salao:pagamentos' %}">Pagamentos</a></li>
-        <li class="nav-item"><a class="nav-link {% if active_tab == 'servicos' %}active{% endif %}" href="{% url 'salao:servicos' %}">Serviços</a></li>
-        <li class="nav-item"><a class="nav-link {% if active_tab == 'categorias' %}active{% endif %}" href="{% url 'salao:categorias' %}">Categorias</a></li>
+        <li class="nav-item">
+            <details class="cadastros-dropdown">
+                <summary class="nav-link {% if active_tab == 'pagamentos' or active_tab == 'servicos' or active_tab == 'categorias' or active_tab == 'produtos' %}active{% endif %}">
+                    Cadastros
+                </summary>
+                <div class="cadastros-dropdown-menu">
+                    <a class="cadastros-dropdown-item {% if active_tab == 'servicos' %}active{% endif %}" href="{% url 'salao:servicos' %}">Serviços</a>
+                    <a class="cadastros-dropdown-item {% if active_tab == 'categorias' %}active{% endif %}" href="{% url 'salao:categorias' %}">Categorias</a>
+                    <a class="cadastros-dropdown-item {% if active_tab == 'produtos' %}active{% endif %}" href="{% url 'salao:produtos' %}">Produtos</a>
+                    <a class="cadastros-dropdown-item {% if active_tab == 'pagamentos' %}active{% endif %}" href="{% url 'salao:pagamentos' %}">Pagamentos</a>
+                </div>
+            </details>
+        </li>
     </ul>
 
     {% include 'salao/partials/toasts.html' %}

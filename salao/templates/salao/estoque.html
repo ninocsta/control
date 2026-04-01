@@ -1,6 +1,48 @@
 {% extends 'salao/base.html' %}
+{% load static %}
 
 {% block title %}Estoque | Salão{% endblock %}
+
+{% block extra_head %}
+<style>
+    .competencia-form-compact .btn {
+        min-height: 44px;
+        white-space: nowrap;
+    }
+
+    .saida-data-input {
+        min-width: 210px;
+    }
+
+    .select2-container .select2-selection--single {
+        min-height: 44px;
+        height: 44px;
+        border: 1.5px solid #ebccd7;
+        border-radius: 13px;
+        display: flex;
+        align-items: center;
+    }
+
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        line-height: 42px !important;
+        padding-left: .82rem;
+        padding-right: 2rem;
+    }
+
+    .select2-container--default .select2-selection--single .select2-selection__clear {
+        height: 42px;
+        margin-right: 1.4rem;
+    }
+
+    .select2-container .select2-selection__arrow {
+        height: auto;
+        top: 50%;
+        transform: translateY(-50%);
+        right: .45rem;
+    }
+</style>
+<link rel="stylesheet" href="{% static 'vendor/select2/css/select2.min.css' %}">
+{% endblock %}
 
 {% block content %}
 {{ formas_catalogo|json_script:'formas-catalogo-json' }}
@@ -11,7 +53,7 @@
             <div class="card-body">
                 <h5 class="card-title mb-3">Saída de Estoque</h5>
 
-                <form method="get" class="row g-2 align-items-end mb-3">
+                <form method="get" class="row g-2 align-items-end mb-3 competencia-form-compact">
                     <div class="col-6 col-md-4">
                         <label class="form-label">Mês</label>
                         <select class="form-select" name="mes">
@@ -28,8 +70,8 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-12 col-md-4 d-grid">
-                        <button class="btn btn-primary" type="submit">Trocar competência</button>
+                    <div class="col-12 col-md-auto">
+                        <button class="btn btn-primary btn-sm px-3" type="submit">Trocar competência</button>
                     </div>
                 </form>
 
@@ -39,11 +81,11 @@
                     <input type="hidden" name="mes" value="{{ mes }}">
                     <input type="hidden" name="ano" value="{{ ano }}">
 
-                    <div class="col-md-4">
+                    <div class="col-md-6 col-lg-5">
                         <label class="form-label">Data</label>
-                        <input class="form-control" type="date" name="data" value="{{ data_padrao|date:'Y-m-d' }}" required>
+                        <input class="form-control form-control-lg saida-data-input" type="date" name="data" value="{{ data_padrao|date:'Y-m-d' }}" required>
                     </div>
-                    <div class="col-md-8">
+                    <div class="col-12">
                         <label class="form-label">Produto</label>
                         <select class="form-select" name="produto_id" id="id_produto_saida" required>
                             <option value="">Selecione</option>
@@ -63,7 +105,7 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Quantidade</label>
-                        <input class="form-control" name="quantidade" inputmode="decimal" placeholder="0,000" required>
+                        <input class="form-control" name="quantidade" inputmode="decimal" value="1" required>
                     </div>
                     <div class="col-md-4 js-venda-field d-none">
                         <label class="form-label">Venda unitária</label>
@@ -224,6 +266,8 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'admin/js/vendor/jquery/jquery.min.js' %}"></script>
+<script src="{% static 'vendor/select2/js/select2.min.js' %}"></script>
 <script>
 (function () {
     const form = document.getElementById('saida-estoque-form');
@@ -323,6 +367,14 @@
     formaPagamentoSelect.addEventListener('change', updateTaxaPreview);
     parcelasInput.addEventListener('change', updateTaxaPreview);
     produtoSelect.addEventListener('change', prefillValorVenda);
+
+    if (window.jQuery && window.jQuery.fn && window.jQuery.fn.select2) {
+        window.jQuery(produtoSelect).select2({
+            width: '100%',
+            placeholder: 'Selecione',
+            allowClear: true,
+        });
+    }
 
     toggleVendaFields();
 })();
