@@ -3,6 +3,7 @@
 {% block title %}Despesas | Salão{% endblock %}
 
 {% block content %}
+{{ subcategorias_catalogo|json_script:'subcategorias-despesa-json' }}
 <div class="row g-3">
     <div class="col-12 col-lg-6">
         <div class="card card-soft mb-3">
@@ -43,11 +44,17 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Categoria</label>
-                        <select class="form-select" name="categoria_id" required>
+                        <select class="form-select" name="categoria_id" id="id_categoria_create" required>
                             <option value="">Selecione</option>
                             {% for categoria in categorias_ativas %}
                                 <option value="{{ categoria.id }}">{{ categoria.nome }}</option>
                             {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Subcategoria</label>
+                        <select class="form-select" name="subcategoria_id" id="id_subcategoria_create">
+                            <option value="">Sem subcategoria</option>
                         </select>
                     </div>
                     <div class="col-md-4">
@@ -143,10 +150,16 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Categoria</label>
-                        <select class="form-select" name="categoria_id" required>
+                        <select class="form-select" name="categoria_id" id="id_categoria_edit" required>
                             {% for categoria in categorias_ativas %}
                                 <option value="{{ categoria.id }}" {% if categoria.id == edit_despesa.categoria_id %}selected{% endif %}>{{ categoria.nome }}</option>
                             {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Subcategoria</label>
+                        <select class="form-select" name="subcategoria_id" id="id_subcategoria_edit" data-selected-id="{% if edit_despesa.subcategoria_id %}{{ edit_despesa.subcategoria_id }}{% endif %}">
+                            <option value="">Sem subcategoria</option>
                         </select>
                     </div>
                     <div class="col-md-4">
@@ -177,6 +190,7 @@
                             <tr>
                                 <th>Data</th>
                                 <th>Categoria</th>
+                                <th>Subcategoria</th>
                                 <th class="text-center">Tipo</th>
                                 <th class="text-center">Parcela</th>
                                 <th class="d-none d-md-table-cell">Observação</th>
@@ -189,6 +203,7 @@
                             <tr>
                                 <td>{{ despesa.data|date:'d/m/Y' }}</td>
                                 <td>{{ despesa.categoria.nome }}</td>
+                                <td>{{ despesa.subcategoria.nome|default:'Sem subcategoria' }}</td>
                                 <td class="text-center">
                                     {% if despesa.gera_estoque %}Compra estoque{% else %}Normal{% endif %}
                                 </td>
@@ -218,7 +233,7 @@
                                 </td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="7" class="text-center text-muted py-4">Nenhuma despesa no mês.</td></tr>
+                            <tr><td colspan="8" class="text-center text-muted py-4">Nenhuma despesa no mês.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -236,18 +251,39 @@
     if (!createForm) return;
 
     const form = createForm.closest('form');
-    const categoriaSelect = form.querySelector('select[name="categoria_id"]');
+    const categoriaSelect = document.getElementById('id_categoria_create');
+    const subcategoriaSelect = document.getElementById('id_subcategoria_create');
+    const categoriaEditSelect = document.getElementById('id_categoria_edit');
+    const subcategoriaEditSelect = document.getElementById('id_subcategoria_edit');
     const valorInput = form.querySelector('input[name="valor"]');
     const shortcuts = form.querySelectorAll('.js-categoria-atalho');
     const geraEstoqueCheckbox = form.querySelector('input[name="gera_estoque"]');
     const estoqueItemsWrapper = document.getElementById('estoque-items-wrapper');
     const itensContainer = document.getElementById('itens-container');
     const btnAddItem = document.getElementById('btn-add-item');
+    const subcategoriasNode = document.getElementById('subcategorias-despesa-json');
+    const subcategorias = subcategoriasNode ? JSON.parse(subcategoriasNode.textContent) : [];
     const produtosOptions = `{% for produto in produtos_ativos %}<option value="{{ produto.id }}">{{ produto.codigo }} - {{ produto.nome }}</option>{% endfor %}`;
+
+    const updateSubcategorias = (categoriaId, selectEl, selectedId) => {
+        if (!selectEl) return;
+        const previousValue = selectedId || selectEl.value || '';
+        const options = ['<option value="">Sem subcategoria</option>'];
+        subcategorias
+            .filter((item) => String(item.categoria_id) === String(categoriaId || ''))
+            .forEach((item) => {
+                options.push(`<option value="${item.id}">${item.nome}</option>`);
+            });
+        selectEl.innerHTML = options.join('');
+        if (previousValue && selectEl.querySelector(`option[value="${previousValue}"]`)) {
+            selectEl.value = String(previousValue);
+        }
+    };
 
     shortcuts.forEach((button) => {
         button.addEventListener('click', () => {
             categoriaSelect.value = button.dataset.categoriaId;
+            updateSubcategorias(categoriaSelect.value, subcategoriaSelect, '');
             valorInput.focus();
             valorInput.select();
         });
@@ -337,6 +373,21 @@
 
     itensContainer.querySelectorAll('.item-row').forEach(bindRowEvents);
     geraEstoqueCheckbox.addEventListener('change', updateStockMode);
+    categoriaSelect.addEventListener('change', () => {
+        updateSubcategorias(categoriaSelect.value, subcategoriaSelect, '');
+    });
+    updateSubcategorias(categoriaSelect.value, subcategoriaSelect, '');
+
+    if (categoriaEditSelect && subcategoriaEditSelect) {
+        categoriaEditSelect.addEventListener('change', () => {
+            updateSubcategorias(categoriaEditSelect.value, subcategoriaEditSelect, '');
+        });
+        updateSubcategorias(
+            categoriaEditSelect.value,
+            subcategoriaEditSelect,
+            subcategoriaEditSelect.dataset.selectedId || ''
+        );
+    }
     updateStockMode();
 })();
 </script>

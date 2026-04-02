@@ -5,7 +5,7 @@
 {% block content %}
 <div class="row g-3">
     <div class="col-12 col-lg-5">
-        <div class="card card-soft">
+        <div class="card card-soft mb-3">
             <div class="card-body">
                 <h5 class="card-title mb-3">
                     {% if edit_categoria %}Editar Categoria #{{ edit_categoria.id }}{% else %}Nova Categoria{% endif %}
@@ -42,10 +42,65 @@
                 </form>
             </div>
         </div>
+
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title mb-3">
+                    {% if edit_subcategoria %}Editar Subcategoria #{{ edit_subcategoria.id }}{% else %}Nova Subcategoria{% endif %}
+                </h5>
+                <form method="post" class="row g-2 align-items-end">
+                    {% csrf_token %}
+                    {% if edit_subcategoria %}
+                        <input type="hidden" name="action" value="update_subcategoria">
+                        <input type="hidden" name="subcategoria_id" value="{{ edit_subcategoria.id }}">
+                    {% else %}
+                        <input type="hidden" name="action" value="create_subcategoria">
+                    {% endif %}
+
+                    <div class="col-12">
+                        <label class="form-label">Categoria</label>
+                        <select class="form-select" name="categoria_id" required>
+                            <option value="">Selecione</option>
+                            {% for categoria in categorias %}
+                                <option value="{{ categoria.id }}" {% if edit_subcategoria and categoria.id == edit_subcategoria.categoria_id %}selected{% endif %}>
+                                    {{ categoria.nome }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Nome da subcategoria</label>
+                        <input
+                            class="form-control"
+                            name="nome"
+                            maxlength="100"
+                            required
+                            value="{% if edit_subcategoria %}{{ edit_subcategoria.nome }}{% endif %}"
+                        >
+                    </div>
+                    <div class="col-8">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" name="ativo" id="id_ativo_subcategoria" {% if edit_subcategoria %}{% if edit_subcategoria.ativo %}checked{% endif %}{% else %}checked{% endif %}>
+                            <label class="form-check-label" for="id_ativo_subcategoria">Ativa</label>
+                        </div>
+                    </div>
+                    <div class="col-12 d-grid mt-2">
+                        <button class="btn btn-primary" type="submit">
+                            {% if edit_subcategoria %}Salvar subcategoria{% else %}Cadastrar subcategoria{% endif %}
+                        </button>
+                    </div>
+                    {% if edit_subcategoria %}
+                    <div class="col-12 d-grid">
+                        <a class="btn btn-outline-secondary" href="{% url 'salao:categorias' %}">Cancelar edição</a>
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+        </div>
     </div>
 
     <div class="col-12 col-lg-7">
-        <div class="card card-soft">
+        <div class="card card-soft mb-3">
             <div class="card-body">
                 <h5 class="card-title">Categorias cadastradas</h5>
                 <div class="table-wrap mt-3">
@@ -76,6 +131,46 @@
                             </tr>
                             {% empty %}
                             <tr><td colspan="3" class="text-center text-muted py-4">Nenhuma categoria cadastrada.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Subcategorias cadastradas</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm align-middle table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Categoria</th>
+                                <th>Subcategoria</th>
+                                <th class="text-center">Status</th>
+                                <th class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for subcategoria in subcategorias %}
+                            <tr>
+                                <td>{{ subcategoria.categoria.nome }}</td>
+                                <td>{{ subcategoria.nome }}</td>
+                                <td class="text-center">
+                                    {% if subcategoria.ativo %}Ativa{% else %}Inativa{% endif %}
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:categorias' %}?edit_subcategoria={{ subcategoria.id }}">Editar</a>
+                                    <form method="post" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_subcategoria">
+                                        <input type="hidden" name="subcategoria_id" value="{{ subcategoria.id }}">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-center text-muted py-4">Nenhuma subcategoria cadastrada.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>

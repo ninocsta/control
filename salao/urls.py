@@ -16,6 +16,8 @@ urlpatterns = [
         views.dashboard_relatorio_lancamentos,
         name='dashboard_relatorio_lancamentos',
     ),
+    path('grid/lancamentos/', views.grid_lancamentos, name='grid_lancamentos'),
+    path('grid/despesas/', views.grid_despesas, name='grid_despesas'),
     path('servicos/', views.servicos, name='servicos'),
     path('categorias/', views.categorias, name='categorias'),
     path('pagamentos/', views.pagamentos, name='pagamentos'),

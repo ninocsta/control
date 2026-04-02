@@ -11,6 +11,7 @@ from .models import (
     MovimentoEstoqueSalao,
     ProdutoSalao,
     ServicoSalao,
+    SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
 )
 
@@ -29,6 +30,14 @@ class CategoriaDespesaSalaoAdmin(admin.ModelAdmin):
     list_filter = ('ativo',)
     search_fields = ('nome',)
     ordering = ('nome',)
+
+
+@admin.register(SubcategoriaDespesaSalao)
+class SubcategoriaDespesaSalaoAdmin(admin.ModelAdmin):
+    list_display = ('nome', 'categoria', 'ativo')
+    list_filter = ('categoria', 'ativo')
+    search_fields = ('nome', 'categoria__nome')
+    ordering = ('categoria__nome', 'nome')
 
 
 @admin.register(FormaPagamentoSalao)
@@ -60,14 +69,15 @@ class DespesaSalaoAdmin(admin.ModelAdmin):
     list_display = (
         'data',
         'categoria',
+        'subcategoria',
         'gera_estoque',
         'valor',
         'parcela_numero',
         'parcelas_total',
         'criado_em',
     )
-    list_filter = ('data', 'categoria', 'gera_estoque')
-    search_fields = ('categoria__nome', 'observacao')
+    list_filter = ('data', 'categoria', 'subcategoria', 'gera_estoque')
+    search_fields = ('categoria__nome', 'subcategoria__nome', 'observacao')
     date_hierarchy = 'data'
 
 

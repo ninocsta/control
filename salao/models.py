@@ -142,6 +142,32 @@ class CategoriaDespesaSalao(models.Model):
         return self.nome
 
 
+class SubcategoriaDespesaSalao(models.Model):
+    categoria = models.ForeignKey(
+        CategoriaDespesaSalao,
+        on_delete=models.PROTECT,
+        related_name='subcategorias',
+    )
+    nome = models.CharField(max_length=100)
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Subcategoria de Despesa do Salão'
+        verbose_name_plural = 'Subcategorias de Despesa do Salão'
+        ordering = ['categoria__nome', 'nome']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['categoria', 'nome'],
+                name='unique_subcategoria_por_categoria_salao',
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.categoria.nome} - {self.nome}"
+
+
 class ProdutoSalao(models.Model):
     codigo = models.CharField(max_length=20, unique=True)
     nome = models.CharField(max_length=140)
@@ -264,6 +290,13 @@ class DespesaSalao(models.Model):
         CategoriaDespesaSalao,
         on_delete=models.PROTECT,
         related_name='despesas',
+    )
+    subcategoria = models.ForeignKey(
+        SubcategoriaDespesaSalao,
+        on_delete=models.PROTECT,
+        related_name='despesas',
+        null=True,
+        blank=True,
     )
     gera_estoque = models.BooleanField(default=False)
     compra_estoque = models.ForeignKey(

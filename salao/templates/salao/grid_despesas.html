@@ -1,0 +1,125 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Grid de Despesas | Salão{% endblock %}
+
+{% block extra_head %}
+<style>
+    .totais-label {
+        display: flex;
+        align-items: center;
+        gap: .4rem;
+    }
+    .totais-icon {
+        width: 14px;
+        height: 14px;
+        color: #d64d73;
+        flex: 0 0 auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card card-soft mb-3">
+    <div class="card-body">
+        <h5 class="card-title mb-3">Grid de Despesas</h5>
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-6 col-md-2">
+                <label class="form-label">Mês</label>
+                <select class="form-select" name="mes">
+                    {% for value, label in month_options %}
+                        <option value="{{ value }}" {% if mes == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">Ano</label>
+                <select class="form-select" name="ano">
+                    {% for year in year_options %}
+                        <option value="{{ year }}" {% if ano == year %}selected{% endif %}>{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="form-label">Categoria</label>
+                <select class="form-select" name="categoria_id">
+                    <option value="">Todas</option>
+                    {% for categoria in categorias_ativas %}
+                        <option value="{{ categoria.id }}" {% if filtro_categoria_id == categoria.id|stringformat:'s' %}selected{% endif %}>
+                            {{ categoria.nome }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="form-label">Subcategoria</label>
+                <select class="form-select" name="subcategoria_id">
+                    <option value="">Todas</option>
+                    {% for subcategoria in subcategorias_ativas %}
+                        <option value="{{ subcategoria.id }}" {% if filtro_subcategoria_id == subcategoria.id|stringformat:'s' %}selected{% endif %}>
+                            {{ subcategoria.nome }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-2 d-grid">
+                <button class="btn btn-primary" type="submit">Filtrar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-12 col-md-4">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted totais-label">
+                <svg class="totais-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 2h2v12H2V2zm5 4h2v8H7V6zm5-3h2v11h-2V3z"/></svg>
+                Qtd. despesas
+            </div>
+            <div class="fw-bold">{{ totais.quantidade }}</div>
+        </div></div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted totais-label">
+                <svg class="totais-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a1 1 0 0 1 1 1v1.07A4.001 4.001 0 0 1 8 11H6v2h2a1 1 0 1 1 0 2H7v1a1 1 0 1 1-2 0v-1H4a1 1 0 1 1 0-2h3V8H5a4 4 0 1 1 0-8h1V1a1 1 0 1 1 2 0zM5 2a2 2 0 1 0 0 4h2V2H5z"/></svg>
+                Total despesas (filtrado)
+            </div>
+            <div class="fw-bold">R$ {{ totais.valor|floatformat:2 }}</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="card card-soft">
+    <div class="card-body">
+        <div class="table-wrap">
+            <table class="table table-sm align-middle table-mobile">
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Categoria</th>
+                        <th>Subcategoria</th>
+                        <th class="text-end">Valor</th>
+                        <th class="text-center">Parcela</th>
+                        <th>Observação</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for despesa in page_obj %}
+                    <tr>
+                        <td>{{ despesa.data|date:'d/m/Y' }}</td>
+                        <td>{{ despesa.categoria.nome }}</td>
+                        <td>{{ despesa.subcategoria.nome|default:'Sem subcategoria' }}</td>
+                        <td class="text-end">R$ {{ despesa.valor|floatformat:2 }}</td>
+                        <td class="text-center">{{ despesa.parcela_numero }}/{{ despesa.parcelas_total }}</td>
+                        <td>{{ despesa.observacao|default:'-' }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center text-muted py-4">Sem despesas para os filtros.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% include 'salao/partials/pagination.html' with page_obj=page_obj pagination_query=pagination_query %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,143 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Grid de Lançamentos | Salão{% endblock %}
+
+{% block extra_head %}
+<style>
+    .totais-label {
+        display: flex;
+        align-items: center;
+        gap: .4rem;
+    }
+    .totais-icon {
+        width: 14px;
+        height: 14px;
+        color: #d64d73;
+        flex: 0 0 auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card card-soft mb-3">
+    <div class="card-body">
+        <h5 class="card-title mb-3">Grid de Lançamentos</h5>
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-6 col-md-2">
+                <label class="form-label">Mês</label>
+                <select class="form-select" name="mes">
+                    {% for value, label in month_options %}
+                        <option value="{{ value }}" {% if mes == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">Ano</label>
+                <select class="form-select" name="ano">
+                    {% for year in year_options %}
+                        <option value="{{ year }}" {% if ano == year %}selected{% endif %}>{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="form-label">Serviço</label>
+                <select class="form-select" name="servico_id">
+                    <option value="">Todos</option>
+                    {% for servico in servicos_ativos %}
+                        <option value="{{ servico.id }}" {% if filtro_servico_id == servico.id|stringformat:'s' %}selected{% endif %}>
+                            {{ servico.codigo }} - {{ servico.nome }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="form-label">Forma de pagamento</label>
+                <select class="form-select" name="forma_pagamento_id">
+                    <option value="">Todas</option>
+                    {% for forma in formas_pagamento_ativas %}
+                        <option value="{{ forma.id }}" {% if filtro_forma_pagamento_id == forma.id|stringformat:'s' %}selected{% endif %}>
+                            {{ forma.codigo }} - {{ forma.nome }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-2 d-grid">
+                <button class="btn btn-primary" type="submit">Filtrar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-12 col-md-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted totais-label">
+                <svg class="totais-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 2h2v12H2V2zm5 4h2v8H7V6zm5-3h2v11h-2V3z"/></svg>
+                Qtd. lançamentos
+            </div>
+            <div class="fw-bold">{{ totais.quantidade }}</div>
+        </div></div>
+    </div>
+    <div class="col-12 col-md-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted totais-label">
+                <svg class="totais-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a1 1 0 0 1 1 1v1.07A4.001 4.001 0 0 1 8 11H6v2h2a1 1 0 1 1 0 2H7v1a1 1 0 1 1-2 0v-1H4a1 1 0 1 1 0-2h3V8H5a4 4 0 1 1 0-8h1V1a1 1 0 1 1 2 0zM5 2a2 2 0 1 0 0 4h2V2H5z"/></svg>
+                Total Bruto
+            </div>
+            <div class="fw-bold">R$ {{ totais.bruto|floatformat:2 }}</div>
+        </div></div>
+    </div>
+    <div class="col-12 col-md-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted totais-label">
+                <svg class="totais-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 13A2.5 2.5 0 1 1 7 10.5 2.5 2.5 0 0 1 4.5 13zm7-7A2.5 2.5 0 1 1 14 3.5 2.5 2.5 0 0 1 11.5 6zM3 14l10-12 1 1L4 15 3 14z"/></svg>
+                Total Taxa
+            </div>
+            <div class="fw-bold">R$ {{ totais.taxa|floatformat:2 }}</div>
+        </div></div>
+    </div>
+    <div class="col-12 col-md-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted totais-label">
+                <svg class="totais-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 8h3l1.2-2.4a1 1 0 0 1 1.8.1L9.4 10l1.1-1.6a1 1 0 0 1 .8-.4H14v2h-2.2l-1.9 2.8a1 1 0 0 1-1.8-.2L6.6 8.4 6.1 9.5a1 1 0 0 1-.9.5H2V8z"/></svg>
+                Total Líquido
+            </div>
+            <div class="fw-bold">R$ {{ totais.liquido|floatformat:2 }}</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="card card-soft">
+    <div class="card-body">
+        <div class="table-wrap">
+            <table class="table table-sm align-middle table-mobile">
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Serviço</th>
+                        <th>Pagamento</th>
+                        <th class="text-end">Bruto</th>
+                        <th class="text-end">Taxa</th>
+                        <th class="text-end">Líquido</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for lancamento in page_obj %}
+                    <tr>
+                        <td>{{ lancamento.data|date:'d/m/Y' }}</td>
+                        <td>{{ lancamento.servico.codigo }} - {{ lancamento.servico.nome }}</td>
+                        <td>{{ lancamento.forma_pagamento.nome|default:'Não informado' }} {{ lancamento.parcelas }}x</td>
+                        <td class="text-end">R$ {{ lancamento.valor_bruto|floatformat:2 }}</td>
+                        <td class="text-end">R$ {{ lancamento.valor_taxa|floatformat:2 }}</td>
+                        <td class="text-end">R$ {{ lancamento.valor_cobrado|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center text-muted py-4">Sem lançamentos para os filtros.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% include 'salao/partials/pagination.html' with page_obj=page_obj pagination_query=pagination_query %}
+    </div>
+</div>
+{% endblock %}

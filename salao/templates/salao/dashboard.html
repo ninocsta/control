@@ -56,7 +56,7 @@
 {{ comparativo_chart|json_script:'comparativo-chart-data' }}
 {{ operacao_chart|json_script:'operacao-chart-data' }}
 {{ atendimentos_dia_chart|json_script:'atendimentos-dia-chart-data' }}
-{{ meta_gauge_chart|json_script:'meta-gauge-chart-data' }}
+{{ meta_bullet_chart|json_script:'meta-bullet-chart-data' }}
 
 <div class="card card-soft mb-3">
     <div class="card-body">
@@ -113,10 +113,11 @@
 
 <div class="row g-3 kpi-grid mb-3">
     <div class="col-6 col-lg-3 kpi-col">
-        <div class="card card-soft kpi-card"><div class="card-body">
+        <a class="card card-soft kpi-card text-decoration-none text-reset" href="{% url 'salao:grid_lancamentos' %}?ano={{ ano }}&mes={{ mes }}"><div class="card-body">
             <h6>Faturamento Líquido</h6>
             <p class="kpi-value">R$ {{ faturamento_bruto|floatformat:2 }}</p>
-        </div></div>
+            <div class="small text-muted">Ver grid de lançamentos →</div>
+        </div></a>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
@@ -149,10 +150,11 @@
         </div></div>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
-        <div class="card card-soft kpi-card"><div class="card-body">
+        <a class="card card-soft kpi-card text-decoration-none text-reset" href="{% url 'salao:grid_despesas' %}?ano={{ ano }}&mes={{ mes }}"><div class="card-body">
             <h6>Despesas</h6>
             <p class="kpi-value">R$ {{ despesas_total|floatformat:2 }}</p>
-        </div></div>
+            <div class="small text-muted">Ver grid de despesas →</div>
+        </div></a>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
@@ -220,14 +222,14 @@
         <div class="card card-soft chart-card">
             <div class="card-body">
                 <h5 class="card-title">Meta do Mês</h5>
-                <canvas id="metaGaugeChart"></canvas>
+                <canvas id="metaBulletChart"></canvas>
                 {% if meta_faturamento %}
                     <div class="small text-muted mt-2">
                         Meta: R$ {{ meta_faturamento|floatformat:2 }} | Realizado: R$ {{ faturamento_bruto|floatformat:2 }}
                         {% if valor_faltante_meta is not None %}| Faltam: R$ {{ valor_faltante_meta|floatformat:2 }}{% endif %}
                     </div>
                 {% else %}
-                    <div class="small text-muted mt-2">Defina a meta mensal para visualizar o gauge.</div>
+                    <div class="small text-muted mt-2">Defina a meta mensal para visualizar o gráfico de meta.</div>
                 {% endif %}
             </div>
         </div>
@@ -253,8 +255,8 @@
     </div>
 </div>
 
-<div class="row g-3">
-    <div class="col-12 col-lg-6">
+<div class="row g-3 mb-3">
+    <div class="col-12">
         <div class="card card-soft">
             <div class="card-body">
                 <h5 class="card-title">Serviços Mais Realizados</h5>
@@ -285,7 +287,9 @@
             </div>
         </div>
     </div>
+</div>
 
+<div class="row g-3">
     <div class="col-12 col-lg-6">
         <div class="card card-soft">
             <div class="card-body">
@@ -302,6 +306,34 @@
                             {% for item in despesas_por_categoria %}
                             <tr>
                                 <td>{{ item.categoria__nome }}</td>
+                                <td class="text-end">R$ {{ item.total|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="2" class="text-center text-muted py-4">Sem despesas no mês.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title">Despesas por Subcategoria</h5>
+                <div class="table-wrap mt-3">
+                    <table class="table table-sm table-mobile">
+                        <thead>
+                            <tr>
+                                <th>Subcategoria</th>
+                                <th class="text-end">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in despesas_por_subcategoria %}
+                            <tr>
+                                <td>{{ item.subcategoria_nome }}</td>
                                 <td class="text-end">R$ {{ item.total|floatformat:2 }}</td>
                             </tr>
                             {% empty %}
@@ -354,13 +386,13 @@
     const comparativoNode = document.getElementById('comparativo-chart-data');
     const operacaoNode = document.getElementById('operacao-chart-data');
     const atendimentosDiaNode = document.getElementById('atendimentos-dia-chart-data');
-    const metaGaugeNode = document.getElementById('meta-gauge-chart-data');
-    if (!comparativoNode || !operacaoNode || !atendimentosDiaNode || !metaGaugeNode) return;
+    const metaBulletNode = document.getElementById('meta-bullet-chart-data');
+    if (!comparativoNode || !operacaoNode || !atendimentosDiaNode || !metaBulletNode) return;
 
     const comparativo = JSON.parse(comparativoNode.textContent);
     const operacao = JSON.parse(operacaoNode.textContent);
     const atendimentosDia = JSON.parse(atendimentosDiaNode.textContent);
-    const metaGauge = JSON.parse(metaGaugeNode.textContent);
+    const metaBullet = JSON.parse(metaBulletNode.textContent);
 
     const moneyTick = (value) => {
         return 'R$ ' + Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -428,16 +460,37 @@
         });
     }
 
-    const metaGaugeCtx = document.getElementById('metaGaugeChart');
-    if (metaGaugeCtx) {
-        const gaugeValue = Math.max(0, Math.min(100, Number(metaGauge.percentual_gauge || 0)));
-        new Chart(metaGaugeCtx, {
+    const metaBulletCtx = document.getElementById('metaBulletChart');
+    if (metaBulletCtx) {
+        const percentualReal = Number(metaBullet.percentual_real || 0);
+        const semicircleValue = metaBullet.tem_meta ? Math.max(0, Math.min(100, percentualReal)) : 0;
+        const centerTextPlugin = {
+            id: 'metaCenterText',
+            afterDraw(chart) {
+                const { ctx, chartArea } = chart;
+                if (!chartArea) return;
+                const centerX = (chartArea.left + chartArea.right) / 2;
+                const centerY = chartArea.top + (chartArea.bottom - chartArea.top) * 0.72;
+
+                ctx.save();
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#4a3945';
+                ctx.font = '700 24px Nunito, sans-serif';
+                ctx.fillText(`${percentualReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`, centerX, centerY);
+                ctx.font = '600 12px DM Sans, sans-serif';
+                ctx.fillStyle = '#7a6f80';
+                ctx.fillText('da meta', centerX, centerY + 18);
+                ctx.restore();
+            },
+        };
+        new Chart(metaBulletCtx, {
             type: 'doughnut',
             data: {
                 labels: ['Atingido', 'Restante'],
                 datasets: [
                     {
-                        data: [gaugeValue, 100 - gaugeValue],
+                        data: [semicircleValue, 100 - semicircleValue],
                         backgroundColor: ['#e66d8c', '#f5e6ec'],
                         borderWidth: 0,
                     },
@@ -446,16 +499,19 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                rotation: -90,
+                circumference: 180,
                 cutout: '72%',
                 plugins: {
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label: (context) => `${context.label}: ${context.raw.toFixed(2)}%`,
+                            label: (context) => `${context.label}: ${Number(context.raw).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
                         },
                     },
                 },
             },
+            plugins: [centerTextPlugin],
         });
     }
 

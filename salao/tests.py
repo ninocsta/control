@@ -18,6 +18,7 @@ from .models import (
     MovimentoEstoqueSalao,
     ProdutoSalao,
     ServicoSalao,
+    SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
 )
 
@@ -39,6 +40,11 @@ class SalaoViewsTests(TestCase):
         )
         self.categoria = CategoriaDespesaSalao.objects.create(
             nome='Produtos',
+            ativo=True,
+        )
+        self.subcategoria = SubcategoriaDespesaSalao.objects.create(
+            categoria=self.categoria,
+            nome='Auxiliar Maria',
             ativo=True,
         )
         self.produto = ProdutoSalao.objects.create(
@@ -193,7 +199,7 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.context['comissao_calculada'], Decimal('60.00'))
         self.assertEqual(response.context['despesas_total'], Decimal('50.00'))
         self.assertEqual(response.context['lucro'], Decimal('190.00'))
-        self.assertIn('meta_gauge_chart', response.context)
+        self.assertIn('meta_bullet_chart', response.context)
 
     def test_dashboard_ignora_override_e_usa_comissao_automatica(self):
         self._login()
@@ -639,6 +645,35 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(created.nome, 'Lavanderia e Toalhas')
         self.assertFalse(created.ativo)
 
+    def test_crud_subcategorias_pela_tela(self):
+        self._login()
+        create_response = self.client.post(
+            reverse('salao:categorias'),
+            {
+                'action': 'create_subcategoria',
+                'categoria_id': self.categoria.id,
+                'nome': 'Auxiliar Joana',
+                'ativo': 'on',
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+        created = SubcategoriaDespesaSalao.objects.get(nome='Auxiliar Joana')
+        self.assertTrue(created.ativo)
+
+        update_response = self.client.post(
+            reverse('salao:categorias'),
+            {
+                'action': 'update_subcategoria',
+                'subcategoria_id': created.id,
+                'categoria_id': self.categoria.id,
+                'nome': 'Auxiliar Joana Silva',
+            },
+        )
+        self.assertEqual(update_response.status_code, 302)
+        created.refresh_from_db()
+        self.assertEqual(created.nome, 'Auxiliar Joana Silva')
+        self.assertFalse(created.ativo)
+
     def test_crud_pagamentos_e_taxas(self):
         self._login()
 
@@ -690,6 +725,26 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(MovimentoEstoqueSalao.objects.count(), 0)
         self.produto.refresh_from_db()
         self.assertEqual(self.produto.saldo_atual, Decimal('0.000'))
+
+    def test_despesa_salva_subcategoria_quando_informada(self):
+        self._login()
+        response = self.client.post(
+            reverse('salao:despesas'),
+            {
+                'action': 'create_despesa',
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-21',
+                'categoria_id': self.categoria.id,
+                'subcategoria_id': self.subcategoria.id,
+                'valor': '130,00',
+                'parcelas': 1,
+                'observacao': 'Pagamento auxiliar',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        despesa = DespesaSalao.objects.get()
+        self.assertEqual(despesa.subcategoria_id, self.subcategoria.id)
 
     def test_despesa_com_estoque_cria_compra_itens_e_movimento(self):
         self._login()
@@ -903,6 +958,72 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.context['comissao_calculada'], Decimal('20.00'))
         self.assertEqual(response.context['vendas_produto_liquidas'], Decimal('50.00'))
         self.assertEqual(response.context['lucro_produto'], Decimal('40.00'))
+
+    def test_dashboard_agrupa_despesas_por_subcategoria(self):
+        self._login()
+        DespesaSalao.objects.create(
+            data=date(2026, 3, 10),
+            categoria=self.categoria,
+            subcategoria=self.subcategoria,
+            valor=Decimal('90.00'),
+            observacao='Auxiliar',
+        )
+        response = self.client.get(reverse('salao:dashboard'), {'ano': 2026, 'mes': 3})
+        self.assertEqual(response.status_code, 200)
+        rows = list(response.context['despesas_por_subcategoria'])
+        self.assertTrue(any(item['subcategoria_nome'] == self.subcategoria.nome for item in rows))
+
+    def test_grid_lancamentos_filtra_por_servico_e_pagamento(self):
+        self._login()
+        outro_servico = ServicoSalao.objects.create(
+            codigo='C99',
+            nome='Outro Serviço',
+            valor_padrao=Decimal('40.00'),
+            ativo=True,
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 10),
+            valor_bruto=Decimal('80.00'),
+            forma_pagamento=self.forma_dinheiro,
+            taxa_percentual=Decimal('0.00'),
+        )
+        LancamentoSalao.objects.create(
+            data=date(2026, 3, 11),
+            servico=outro_servico,
+            forma_pagamento=self.forma_credito,
+            parcelas=1,
+            valor_bruto=Decimal('90.00'),
+            taxa_percentual_aplicada=Decimal('4.00'),
+            valor_taxa=Decimal('3.60'),
+            valor_cobrado=Decimal('86.40'),
+        )
+        response = self.client.get(
+            reverse('salao:grid_lancamentos'),
+            {'ano': 2026, 'mes': 3, 'servico_id': self.servico.id, 'forma_pagamento_id': self.forma_dinheiro.id},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['page_obj'].object_list), 1)
+
+    def test_grid_despesas_filtra_por_categoria_e_subcategoria(self):
+        self._login()
+        outra_categoria = CategoriaDespesaSalao.objects.create(nome='Fixos', ativo=True)
+        DespesaSalao.objects.create(
+            data=date(2026, 3, 9),
+            categoria=self.categoria,
+            subcategoria=self.subcategoria,
+            valor=Decimal('70.00'),
+        )
+        DespesaSalao.objects.create(
+            data=date(2026, 3, 9),
+            categoria=outra_categoria,
+            valor=Decimal('30.00'),
+        )
+        response = self.client.get(
+            reverse('salao:grid_despesas'),
+            {'ano': 2026, 'mes': 3, 'categoria_id': self.categoria.id, 'subcategoria_id': self.subcategoria.id},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['page_obj'].object_list), 1)
 
     def test_alerta_estoque_minimo_em_estoque_e_dashboard(self):
         self._login()

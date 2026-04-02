@@ -8,9 +8,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
+from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, F, Sum
+from django.db.models import CharField, Count, F, Sum, Value
 from django.db.models.deletion import ProtectedError
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
@@ -27,6 +29,7 @@ from .models import (
     MovimentoEstoqueSalao,
     ProdutoSalao,
     ServicoSalao,
+    SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
 )
 
@@ -128,6 +131,16 @@ def _parse_checkbox(raw_value):
     return raw_value in ('on', '1', 'true', 'True')
 
 
+def _parse_subcategoria_despesa(categoria_id, subcategoria_id):
+    if not subcategoria_id:
+        return None
+    return SubcategoriaDespesaSalao.objects.filter(
+        id=subcategoria_id,
+        categoria_id=categoria_id,
+        ativo=True,
+    ).first()
+
+
 def _redirect_lancamentos(ano, mes, dia):
     return redirect(f"{reverse('salao:lancamentos')}?ano={ano}&mes={mes}&dia={dia}")
 
@@ -138,6 +151,14 @@ def _redirect_despesas(ano, mes):
 
 def _redirect_dashboard(ano, mes):
     return redirect(f"{reverse('salao:dashboard')}?ano={ano}&mes={mes}")
+
+
+def _redirect_grid_lancamentos(ano, mes):
+    return redirect(f"{reverse('salao:grid_lancamentos')}?ano={ano}&mes={mes}")
+
+
+def _redirect_grid_despesas(ano, mes):
+    return redirect(f"{reverse('salao:grid_despesas')}?ano={ano}&mes={mes}")
 
 
 def _redirect_servicos():
@@ -672,6 +693,10 @@ def despesas(request):
             if not categoria:
                 messages.error(request, 'Selecione uma categoria ativa.')
                 return _redirect_despesas(ano, mes)
+            subcategoria = _parse_subcategoria_despesa(categoria.id, request.POST.get('subcategoria_id'))
+            if request.POST.get('subcategoria_id') and not subcategoria:
+                messages.error(request, 'Selecione uma subcategoria ativa válida para a categoria.')
+                return _redirect_despesas(ano, mes)
 
             observacao = (request.POST.get('observacao') or '').strip()
             parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
@@ -713,6 +738,7 @@ def despesas(request):
                         DespesaSalao(
                             data=data_parcela,
                             categoria=categoria,
+                            subcategoria=subcategoria,
                             gera_estoque=gera_estoque,
                             compra_estoque=compra_estoque,
                             valor=valores_parcelados[idx],
@@ -809,6 +835,10 @@ def despesas(request):
             if not categoria:
                 messages.error(request, 'Selecione uma categoria ativa válida.')
                 return _redirect_despesas(ano, mes)
+            subcategoria = _parse_subcategoria_despesa(categoria.id, request.POST.get('subcategoria_id'))
+            if request.POST.get('subcategoria_id') and not subcategoria:
+                messages.error(request, 'Selecione uma subcategoria ativa válida para a categoria.')
+                return _redirect_despesas(ano, mes)
 
             valor = _parse_decimal(request.POST.get('valor'))
             if valor is None or valor < Decimal('0.00'):
@@ -817,23 +847,34 @@ def despesas(request):
 
             despesa.data = data_editada
             despesa.categoria = categoria
+            despesa.subcategoria = subcategoria
             despesa.valor = valor
             despesa.observacao = (request.POST.get('observacao') or '').strip()
-            despesa.save(update_fields=['data', 'categoria', 'valor', 'observacao', 'atualizado_em'])
+            despesa.save(
+                update_fields=['data', 'categoria', 'subcategoria', 'valor', 'observacao', 'atualizado_em']
+            )
             messages.success(request, 'Despesa atualizada com sucesso.')
             return _redirect_despesas(ano, mes)
 
     inicio_mes, fim_mes = _date_range_for_month(ano, mes)
     despesas_mes = (
         DespesaSalao.objects.filter(data__range=(inicio_mes, fim_mes))
-        .select_related('categoria', 'compra_estoque')
+        .select_related('categoria', 'subcategoria', 'compra_estoque')
         .order_by('data', 'parcela_numero', 'id')[:300]
     )
 
     edit_despesa = None
     edit_despesa_id = request.GET.get('edit')
     if edit_despesa_id:
-        edit_despesa = DespesaSalao.objects.filter(id=edit_despesa_id).select_related('categoria').first()
+        edit_despesa = DespesaSalao.objects.filter(id=edit_despesa_id).select_related(
+            'categoria', 'subcategoria'
+        ).first()
+
+    subcategorias_ativas = list(
+        SubcategoriaDespesaSalao.objects.filter(ativo=True)
+        .select_related('categoria')
+        .order_by('categoria__nome', 'nome')
+    )
 
     context = {
         'active_tab': 'despesas',
@@ -842,6 +883,11 @@ def despesas(request):
         'month_options': MONTH_OPTIONS,
         'year_options': _build_year_options(),
         'categorias_ativas': categorias_ativas,
+        'subcategorias_ativas': subcategorias_ativas,
+        'subcategorias_catalogo': [
+            {'id': sub.id, 'categoria_id': sub.categoria_id, 'nome': sub.nome}
+            for sub in subcategorias_ativas
+        ],
         'produtos_ativos': produtos_ativos,
         'despesas_mes': despesas_mes,
         'edit_despesa': edit_despesa,
@@ -986,14 +1032,85 @@ def categorias(request):
                 )
             return _redirect_categorias()
 
+        if action == 'create_subcategoria':
+            categoria_id = request.POST.get('categoria_id')
+            categoria = CategoriaDespesaSalao.objects.filter(id=categoria_id).first()
+            nome = (request.POST.get('nome') or '').strip()
+            ativo = _parse_checkbox(request.POST.get('ativo'))
+            if not categoria:
+                messages.error(request, 'Selecione uma categoria válida para a subcategoria.')
+                return _redirect_categorias()
+            if not nome:
+                messages.error(request, 'Informe o nome da subcategoria.')
+                return _redirect_categorias()
+            if SubcategoriaDespesaSalao.objects.filter(categoria=categoria, nome__iexact=nome).exists():
+                messages.error(request, f'Subcategoria "{nome}" já existe nessa categoria.')
+                return _redirect_categorias()
+            SubcategoriaDespesaSalao.objects.create(
+                categoria=categoria,
+                nome=nome,
+                ativo=ativo,
+            )
+            messages.success(request, 'Subcategoria criada com sucesso.')
+            return _redirect_categorias()
+
+        if action == 'update_subcategoria':
+            subcategoria_id = request.POST.get('subcategoria_id')
+            subcategoria = get_object_or_404(SubcategoriaDespesaSalao, id=subcategoria_id)
+            categoria_id = request.POST.get('categoria_id')
+            categoria = CategoriaDespesaSalao.objects.filter(id=categoria_id).first()
+            nome = (request.POST.get('nome') or '').strip()
+            ativo = _parse_checkbox(request.POST.get('ativo'))
+            if not categoria:
+                messages.error(request, 'Selecione uma categoria válida para a subcategoria.')
+                return _redirect_categorias()
+            if not nome:
+                messages.error(request, 'Informe o nome da subcategoria.')
+                return _redirect_categorias()
+            if SubcategoriaDespesaSalao.objects.exclude(id=subcategoria.id).filter(
+                categoria=categoria, nome__iexact=nome
+            ).exists():
+                messages.error(request, f'Subcategoria "{nome}" já existe nessa categoria.')
+                return _redirect_categorias()
+            subcategoria.categoria = categoria
+            subcategoria.nome = nome
+            subcategoria.ativo = ativo
+            subcategoria.save(update_fields=['categoria', 'nome', 'ativo', 'atualizado_em'])
+            messages.success(request, 'Subcategoria atualizada com sucesso.')
+            return _redirect_categorias()
+
+        if action == 'delete_subcategoria':
+            subcategoria_id = request.POST.get('subcategoria_id')
+            subcategoria = get_object_or_404(SubcategoriaDespesaSalao, id=subcategoria_id)
+            try:
+                subcategoria.delete()
+                messages.success(request, 'Subcategoria removida com sucesso.')
+            except ProtectedError:
+                messages.error(
+                    request,
+                    'Não foi possível remover: essa subcategoria possui despesas vinculadas.',
+                )
+            return _redirect_categorias()
+
     categorias_qs = CategoriaDespesaSalao.objects.all().order_by('nome')
     edit_id = request.GET.get('edit')
     edit_categoria = CategoriaDespesaSalao.objects.filter(id=edit_id).first() if edit_id else None
+    subcategorias_qs = SubcategoriaDespesaSalao.objects.select_related('categoria').order_by(
+        'categoria__nome', 'nome'
+    )
+    edit_subcategoria_id = request.GET.get('edit_subcategoria')
+    edit_subcategoria = (
+        SubcategoriaDespesaSalao.objects.select_related('categoria').filter(id=edit_subcategoria_id).first()
+        if edit_subcategoria_id
+        else None
+    )
 
     context = {
         'active_tab': 'categorias',
         'categorias': categorias_qs,
         'edit_categoria': edit_categoria,
+        'subcategorias': subcategorias_qs,
+        'edit_subcategoria': edit_subcategoria,
     }
     return render(request, 'salao/categorias.html', context)
 
@@ -1518,6 +1635,17 @@ def dashboard(request):
         .annotate(total=Sum('valor'))
         .order_by('-total', 'categoria__nome')
     )
+    despesas_por_subcategoria = (
+        despesas_mes.filter(subcategoria__isnull=False).annotate(
+            subcategoria_nome=Coalesce(
+                'subcategoria__nome',
+                Value('', output_field=CharField()),
+            )
+        )
+        .values('subcategoria_nome')
+        .annotate(total=Sum('valor'))
+        .order_by('-total', 'subcategoria_nome')
+    )
     produtos_alerta = (
         ProdutoSalao.objects.filter(ativo=True, saldo_atual__lte=F('estoque_minimo'))
         .order_by('saldo_atual', 'codigo')[:15]
@@ -1609,12 +1737,13 @@ def dashboard(request):
         'produtos_alerta': produtos_alerta,
         'ranking_servicos': ranking_servicos,
         'despesas_por_categoria': despesas_por_categoria,
-        'meta_gauge_chart': {
+        'despesas_por_subcategoria': despesas_por_subcategoria,
+        'meta_bullet_chart': {
             'tem_meta': bool(meta_faturamento and meta_faturamento > Decimal('0.00')),
             'meta': float(meta_faturamento or Decimal('0.00')),
             'realizado': float(faturamento_liquido),
             'percentual_real': float(percentual_meta_atingido or Decimal('0.00')),
-            'percentual_gauge': float(min(percentual_meta_atingido or Decimal('0.00'), Decimal('100.00'))),
+            'faltante': float(valor_faltante_meta or Decimal('0.00')),
         },
         'comparativo_chart': {
             'labels': chart_labels,
@@ -1730,3 +1859,102 @@ def dashboard_relatorio_lancamentos(request):
     )
     workbook.save(response)
     return response
+
+
+@_salao_superuser_required
+def grid_lancamentos(request):
+    ano, mes = _parse_competencia(request)
+    servico_id = (request.GET.get('servico_id') or '').strip()
+    forma_pagamento_id = (request.GET.get('forma_pagamento_id') or '').strip()
+
+    lancamentos_qs = LancamentoSalao.objects.filter(data__year=ano, data__month=mes).select_related(
+        'servico', 'forma_pagamento'
+    )
+    if servico_id:
+        lancamentos_qs = lancamentos_qs.filter(servico_id=servico_id)
+    if forma_pagamento_id:
+        lancamentos_qs = lancamentos_qs.filter(forma_pagamento_id=forma_pagamento_id)
+
+    resumo_totais = lancamentos_qs.aggregate(
+        bruto=Sum('valor_bruto'),
+        taxa=Sum('valor_taxa'),
+        liquido=Sum('valor_cobrado'),
+        quantidade=Count('id'),
+    )
+    lancamentos_qs = lancamentos_qs.order_by('-data', '-id')
+    paginator = Paginator(lancamentos_qs, 50)
+    page_obj = paginator.get_page(request.GET.get('page') or 1)
+    query_params = request.GET.copy()
+    query_params.pop('page', None)
+
+    context = {
+        'active_tab': 'dashboard',
+        'ano': ano,
+        'mes': mes,
+        'month_options': MONTH_OPTIONS,
+        'year_options': _build_year_options(),
+        'servicos_ativos': ServicoSalao.objects.filter(ativo=True).order_by('codigo'),
+        'formas_pagamento_ativas': FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'),
+        'filtro_servico_id': servico_id,
+        'filtro_forma_pagamento_id': forma_pagamento_id,
+        'page_obj': page_obj,
+        'pagination_query': query_params.urlencode(),
+        'totais': {
+            'bruto': resumo_totais['bruto'] or Decimal('0.00'),
+            'taxa': resumo_totais['taxa'] or Decimal('0.00'),
+            'liquido': resumo_totais['liquido'] or Decimal('0.00'),
+            'quantidade': resumo_totais['quantidade'] or 0,
+        },
+    }
+    return render(request, 'salao/grid_lancamentos.html', context)
+
+
+@_salao_superuser_required
+def grid_despesas(request):
+    ano, mes = _parse_competencia(request)
+    categoria_id = (request.GET.get('categoria_id') or '').strip()
+    subcategoria_id = (request.GET.get('subcategoria_id') or '').strip()
+
+    despesas_qs = DespesaSalao.objects.filter(data__year=ano, data__month=mes).select_related(
+        'categoria', 'subcategoria'
+    )
+    if categoria_id:
+        despesas_qs = despesas_qs.filter(categoria_id=categoria_id)
+    if subcategoria_id:
+        despesas_qs = despesas_qs.filter(subcategoria_id=subcategoria_id)
+
+    resumo_totais = despesas_qs.aggregate(
+        valor=Sum('valor'),
+        quantidade=Count('id'),
+    )
+    despesas_qs = despesas_qs.order_by('-data', '-id')
+    paginator = Paginator(despesas_qs, 50)
+    page_obj = paginator.get_page(request.GET.get('page') or 1)
+    query_params = request.GET.copy()
+    query_params.pop('page', None)
+
+    categorias = CategoriaDespesaSalao.objects.filter(ativo=True).order_by('nome')
+    subcategorias = SubcategoriaDespesaSalao.objects.filter(ativo=True).select_related('categoria').order_by(
+        'categoria__nome', 'nome'
+    )
+    if categoria_id:
+        subcategorias = subcategorias.filter(categoria_id=categoria_id)
+
+    context = {
+        'active_tab': 'dashboard',
+        'ano': ano,
+        'mes': mes,
+        'month_options': MONTH_OPTIONS,
+        'year_options': _build_year_options(),
+        'categorias_ativas': categorias,
+        'subcategorias_ativas': subcategorias,
+        'filtro_categoria_id': categoria_id,
+        'filtro_subcategoria_id': subcategoria_id,
+        'page_obj': page_obj,
+        'pagination_query': query_params.urlencode(),
+        'totais': {
+            'valor': resumo_totais['valor'] or Decimal('0.00'),
+            'quantidade': resumo_totais['quantidade'] or 0,
+        },
+    }
+    return render(request, 'salao/grid_despesas.html', context)

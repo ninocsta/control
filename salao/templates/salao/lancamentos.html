@@ -617,9 +617,20 @@
             return;
         }
 
+        const previewData = updateLiquidoPreview();
+        if (!previewData || previewData.taxaPercentual === null) {
+            codigoFormaInput.focus();
+            codigoFormaInput.select();
+            return;
+        }
+
+        if (!forma.aceita_parcelamento) {
+            form.submit();
+            return;
+        }
+
         parcelasInput.focus();
         parcelasInput.select();
-        updateLiquidoPreview();
     });
 
     parcelasInput.addEventListener('keydown', (event) => {
