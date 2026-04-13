@@ -4,16 +4,66 @@
 
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 <style>
     .chart-card canvas { max-height: 320px; }
-    .kpi-badge {
+    .privacy-toggle-btn {
+        width: 46px;
+        min-width: 46px;
+        height: 37px;
+        padding: 0;
         display: inline-flex;
-        font-size: .75rem;
+        align-items: center;
+        justify-content: center;
+        border-radius: 12px;
+        border: 1.5px solid #e8c5d2;
+        background: linear-gradient(180deg, #fff, #fff7fa);
+        color: #7a5b67;
+        transition: all .16s ease;
+    }
+    .privacy-toggle-btn:hover {
+        border-color: #dba1b4;
+        background: #fff1f6;
+        color: #6f4f5e;
+        transform: translateY(-1px);
+    }
+    .privacy-toggle-btn .bi {
+        font-size: 1.05rem;
+        line-height: 1;
+    }
+    .privacy-toggle-btn .icon-hide {
+        display: none;
+    }
+    .privacy-toggle-btn.is-fake {
+        border-color: transparent;
+        background: linear-gradient(135deg, #e66d8c, #d64d73);
+        color: #fff;
+        box-shadow: 0 12px 24px rgba(214, 77, 115, 0.24);
+    }
+    .privacy-toggle-btn.is-fake .icon-show {
+        display: none;
+    }
+    .privacy-toggle-btn.is-fake .icon-hide {
+        display: inline;
+    }
+    .meta-privacy-hint {
+        display: none;
+        font-size: .74rem;
         font-weight: 700;
-        color: #775b67;
-        background: #fde7ee;
-        border-radius: 999px;
-        padding: .22rem .65rem;
+        color: #8a6473;
+    }
+    .meta-privacy-hint.is-visible {
+        display: block;
+    }
+    .fake-products-note {
+        display: none;
+        font-size: .82rem;
+        color: #7b6a78;
+        font-weight: 700;
+        margin-top: .45rem;
+    }
+    .fake-products-note.is-visible {
+        display: block;
     }
     .meta-form-card {
         border: 1px solid #f2d8e1;
@@ -82,13 +132,16 @@
                     <div class="col-12 col-md-4 d-grid">
                         <button class="btn btn-primary" type="submit">Atualizar visão</button>
                     </div>
-                    <div class="col-12 col-md-4 d-grid">
-                        <a class="btn btn-primary" href="{% url 'salao:dashboard_relatorio_lancamentos' %}?ano={{ ano }}&mes={{ mes }}">
-                            Relatório Excel
-                        </a>
-                    </div>
-                    <div class="col-12 col-md-2 d-flex align-items-center">
-                        <span class="kpi-badge">Comissão {{ comissao_percentual }}%</span>
+                    <div class="col-12 col-md-4 mt-1">
+                        <div class="d-flex align-items-start">
+                            <a class="btn btn-primary mr-2" href="{% url 'salao:dashboard_relatorio_lancamentos' %}?ano={{ ano }}&mes={{ mes }}">
+                                Relatório Excel
+                            </a>
+                            <button class="btn privacy-toggle-btn flex-shrink-0" id="privacyToggleBtn" type="button" aria-pressed="false" aria-label="Ativar modo demonstração" title="Ativar modo demonstração">
+                                <i class="bi bi-eye icon-show" aria-hidden="true"></i>
+                                <i class="bi bi-eye-slash icon-hide" aria-hidden="true"></i>
+                            </button>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -100,10 +153,13 @@
                     <input type="hidden" name="ano" value="{{ ano }}">
                     <div class="col-12 col-md-7">
                         <label class="form-label mb-1">Meta de faturamento (mês)</label>
-                        <input class="form-control" name="meta_faturamento" inputmode="decimal" placeholder="Ex: 8000,00" value="{% if meta_faturamento %}{{ meta_faturamento }}{% endif %}">
+                        <input id="metaFaturamentoInput" class="form-control" name="meta_faturamento" inputmode="decimal" placeholder="Ex: 8000,00" value="{% if meta_faturamento %}{{ meta_faturamento }}{% endif %}">
                     </div>
                     <div class="col-12 col-md-5 d-grid">
-                        <button class="btn btn-primary" type="submit">Salvar meta</button>
+                        <button id="metaSalvarBtn" class="btn btn-primary" type="submit">Salvar meta</button>
+                    </div>
+                    <div class="col-12">
+                        <div class="meta-privacy-hint" id="metaPrivacyHint">Meta de faturamento ocultada no modo demonstração.</div>
                     </div>
                 </form>
             </div>
@@ -115,58 +171,58 @@
     <div class="col-6 col-lg-3 kpi-col">
         <a class="card card-soft kpi-card text-decoration-none text-reset" href="{% url 'salao:grid_lancamentos' %}?ano={{ ano }}&mes={{ mes }}"><div class="card-body">
             <h6>Faturamento Líquido</h6>
-            <p class="kpi-value">R$ {{ faturamento_bruto|floatformat:2 }}</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-faturamento-liquido">R$ {{ faturamento_bruto|floatformat:2 }}</p>
             <div class="small text-muted">Ver grid de lançamentos →</div>
         </div></a>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
             <h6>Faturamento Bruto</h6>
-            <p class="kpi-value">R$ {{ faturamento_bruto_cliente|floatformat:2 }}</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-faturamento-bruto">R$ {{ faturamento_bruto_cliente|floatformat:2 }}</p>
         </div></div>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
             <h6>Taxas de Pagamento</h6>
-            <p class="kpi-value">R$ {{ taxas_total|floatformat:2 }}</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-taxas">R$ {{ taxas_total|floatformat:2 }}</p>
         </div></div>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
             <h6>Impacto das Taxas</h6>
-            <p class="kpi-value">{{ impacto_taxas_percentual|floatformat:2 }}%</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="percent" data-sensitive-key="kpi-impacto-taxas">{{ impacto_taxas_percentual|floatformat:2 }}%</p>
         </div></div>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
             <h6>Comissão</h6>
-            <p class="kpi-value">R$ {{ comissao_calculada|floatformat:2 }}</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-comissao">R$ {{ comissao_calculada|floatformat:2 }}</p>
         </div></div>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
             <h6>Após Comissão</h6>
-            <p class="kpi-value">R$ {{ valor_pos_comissao|floatformat:2 }}</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-pos-comissao">R$ {{ valor_pos_comissao|floatformat:2 }}</p>
         </div></div>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <a class="card card-soft kpi-card text-decoration-none text-reset" href="{% url 'salao:grid_despesas' %}?ano={{ ano }}&mes={{ mes }}"><div class="card-body">
             <h6>Despesas</h6>
-            <p class="kpi-value">R$ {{ despesas_total|floatformat:2 }}</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-despesas">R$ {{ despesas_total|floatformat:2 }}</p>
             <div class="small text-muted">Ver grid de despesas →</div>
         </div></a>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
             <h6>Lucro</h6>
-            <p class="kpi-value">R$ {{ lucro|floatformat:2 }}</p>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-lucro">R$ {{ lucro|floatformat:2 }}</p>
         </div></div>
     </div>
     <div class="col-6 col-lg-3 kpi-col">
         <div class="card card-soft kpi-card"><div class="card-body">
             <h6>Ticket Médio</h6>
-            <p class="kpi-value">R$ {{ ticket_medio|floatformat:2 }}</p>
-            <div class="small text-muted">{{ atendimentos_total }} atendimento(s)</div>
+            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-ticket">R$ {{ ticket_medio|floatformat:2 }}</p>
+            <div class="small text-muted"><span class="js-sensitive" data-sensitive-type="count" data-sensitive-key="kpi-atendimentos">{{ atendimentos_total }}</span> atendimento(s)</div>
         </div></div>
     </div>
 </div>
@@ -178,34 +234,35 @@
             <div class="col-6 col-lg-2">
                 <div class="kpi-card">
                     <h6>Venda Bruta Produto</h6>
-                    <p class="kpi-value">R$ {{ vendas_produto_brutas|floatformat:2 }}</p>
+                    <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="produto-venda-bruta">R$ {{ vendas_produto_brutas|floatformat:2 }}</p>
                 </div>
             </div>
             <div class="col-6 col-lg-2">
                 <div class="kpi-card">
                     <h6>Taxa Produto</h6>
-                    <p class="kpi-value">R$ {{ taxas_produto_total|floatformat:2 }}</p>
+                    <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="produto-taxa">R$ {{ taxas_produto_total|floatformat:2 }}</p>
                 </div>
             </div>
             <div class="col-6 col-lg-2">
                 <div class="kpi-card">
                     <h6>Venda Líquida Produto</h6>
-                    <p class="kpi-value">R$ {{ vendas_produto_liquidas|floatformat:2 }}</p>
+                    <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="produto-venda-liquida">R$ {{ vendas_produto_liquidas|floatformat:2 }}</p>
                 </div>
             </div>
             <div class="col-6 col-lg-3">
                 <div class="kpi-card">
                     <h6>Custo das Saídas</h6>
-                    <p class="kpi-value">R$ {{ custo_produto_vendido|floatformat:2 }}</p>
+                    <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="produto-custo">R$ {{ custo_produto_vendido|floatformat:2 }}</p>
                 </div>
             </div>
             <div class="col-6 col-lg-3">
                 <div class="kpi-card">
                     <h6>Lucro Produto</h6>
-                    <p class="kpi-value">R$ {{ lucro_produto|floatformat:2 }}</p>
+                    <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="produto-lucro">R$ {{ lucro_produto|floatformat:2 }}</p>
                 </div>
             </div>
         </div>
+        <div class="fake-products-note" id="fakeProductsNote">Simulação: 5 produtos vendidos no mês.</div>
     </div>
 </div>
 
@@ -225,8 +282,9 @@
                 <canvas id="metaBulletChart"></canvas>
                 {% if meta_faturamento %}
                     <div class="small text-muted mt-2">
-                        Meta: R$ {{ meta_faturamento|floatformat:2 }} | Realizado: R$ {{ faturamento_bruto|floatformat:2 }}
-                        {% if valor_faltante_meta is not None %}| Faltam: R$ {{ valor_faltante_meta|floatformat:2 }}{% endif %}
+                        Meta: <span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="meta-valor">R$ {{ meta_faturamento|floatformat:2 }}</span>
+                        | Realizado: <span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="meta-realizado">R$ {{ faturamento_bruto|floatformat:2 }}</span>
+                        {% if valor_faltante_meta is not None %}| Faltam: <span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="meta-faltante">R$ {{ valor_faltante_meta|floatformat:2 }}</span>{% endif %}
                     </div>
                 {% else %}
                     <div class="small text-muted mt-2">Defina a meta mensal para visualizar o gráfico de meta.</div>
@@ -275,8 +333,8 @@
                             <tr>
                                 <td>{{ item.servico__codigo }}</td>
                                 <td>{{ item.servico__nome }}</td>
-                                <td class="text-end">{{ item.quantidade }}</td>
-                                <td class="text-end">R$ {{ item.total|floatformat:2 }}</td>
+                                <td class="text-end"><span class="js-sensitive" data-sensitive-type="count" data-sensitive-key="ranking-qtd">{{ item.quantidade }}</span></td>
+                                <td class="text-end"><span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="ranking-total">R$ {{ item.total|floatformat:2 }}</span></td>
                             </tr>
                             {% empty %}
                             <tr><td colspan="4" class="text-center text-muted py-4">Sem lançamentos no mês.</td></tr>
@@ -306,7 +364,7 @@
                             {% for item in despesas_por_categoria %}
                             <tr>
                                 <td>{{ item.categoria__nome }}</td>
-                                <td class="text-end">R$ {{ item.total|floatformat:2 }}</td>
+                                <td class="text-end"><span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="despesa-categoria-total">R$ {{ item.total|floatformat:2 }}</span></td>
                             </tr>
                             {% empty %}
                             <tr><td colspan="2" class="text-center text-muted py-4">Sem despesas no mês.</td></tr>
@@ -334,7 +392,7 @@
                             {% for item in despesas_por_subcategoria %}
                             <tr>
                                 <td>{{ item.subcategoria_nome }}</td>
-                                <td class="text-end">R$ {{ item.total|floatformat:2 }}</td>
+                                <td class="text-end"><span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="despesa-subcategoria-total">R$ {{ item.total|floatformat:2 }}</span></td>
                             </tr>
                             {% empty %}
                             <tr><td colspan="2" class="text-center text-muted py-4">Sem despesas no mês.</td></tr>
@@ -366,9 +424,9 @@
                     <tr>
                         <td>{{ produto.codigo }}</td>
                         <td>{{ produto.nome }}</td>
-                        <td class="text-end text-danger fw-bold">{{ produto.saldo_atual|floatformat:3 }}</td>
-                        <td class="text-end">{{ produto.estoque_minimo|floatformat:3 }}</td>
-                        <td class="text-end">R$ {{ produto.custo_medio_atual|floatformat:2 }}</td>
+                        <td class="text-end text-danger fw-bold"><span class="js-sensitive" data-sensitive-type="quantity3" data-sensitive-key="alerta-saldo">{{ produto.saldo_atual|floatformat:3 }}</span></td>
+                        <td class="text-end"><span class="js-sensitive" data-sensitive-type="quantity3" data-sensitive-key="alerta-minimo">{{ produto.estoque_minimo|floatformat:3 }}</span></td>
+                        <td class="text-end"><span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="alerta-custo">R$ {{ produto.custo_medio_atual|floatformat:2 }}</span></td>
                     </tr>
                     {% empty %}
                     <tr><td colspan="5" class="text-center text-muted py-4">Nenhum produto em alerta.</td></tr>
@@ -388,11 +446,266 @@
     const atendimentosDiaNode = document.getElementById('atendimentos-dia-chart-data');
     const metaBulletNode = document.getElementById('meta-bullet-chart-data');
     if (!comparativoNode || !operacaoNode || !atendimentosDiaNode || !metaBulletNode) return;
-
     const comparativo = JSON.parse(comparativoNode.textContent);
     const operacao = JSON.parse(operacaoNode.textContent);
     const atendimentosDia = JSON.parse(atendimentosDiaNode.textContent);
     const metaBullet = JSON.parse(metaBulletNode.textContent);
+
+    const privacyButton = document.getElementById('privacyToggleBtn');
+    const fakeProductsNote = document.getElementById('fakeProductsNote');
+    const metaInput = document.getElementById('metaFaturamentoInput');
+    const metaSaveButton = document.getElementById('metaSalvarBtn');
+    const metaPrivacyHint = document.getElementById('metaPrivacyHint');
+    const sensitiveNodes = Array.from(document.querySelectorAll('.js-sensitive'));
+    const chartBindings = [];
+    let metaChartInstance = null;
+    let metaPercentualDisplay = Number(metaBullet.percentual_real || 0);
+    let fakeMode = false;
+
+    const demoScenario = {
+        faturamentoBruto: 2000.00,
+        faturamentoLiquido: 1880.00,
+        taxas: 120.00,
+        impactoTaxas: 6.00,
+        comissao: 376.00,
+        posComissao: 1504.00,
+        despesas: 620.00,
+        lucro: 884.00,
+        atendimentos: 25,
+        ticketMedio: 75.20,
+        produto: {
+            vendaBruta: 350.00,
+            taxa: 21.00,
+            vendaLiquida: 329.00,
+            custo: 190.00,
+            lucro: 139.00,
+            qtdVendida: 5,
+        },
+        meta: {
+            valor: 2300.00,
+            realizado: 1880.00,
+            faltante: 420.00,
+            percentual: 81.74,
+            input: '2.300,00',
+        },
+        ranking: {
+            qtd: [7, 5, 6, 4, 3],
+            total: [560, 500, 390, 260, 170],
+        },
+        despesasCategoria: [280, 210, 130],
+        despesasSubcategoria: [160, 120, 95, 75],
+        estoque: {
+            saldo: [1.200, 0.850, 0.620, 0.540, 0.410],
+            minimo: [2.000, 1.500, 1.000, 0.900, 0.800],
+            custo: [22.50, 18.90, 12.40, 9.80, 15.30],
+        },
+        comparativo: {
+            faturamento: [1500, 1600, 1680, 1750, 1815, 1880],
+            taxas: [96, 101, 106, 112, 116, 120],
+            despesas: [520, 540, 560, 580, 600, 620],
+            lucro: [680, 740, 784, 820, 852, 884],
+        },
+        operacao: {
+            atendimentos: [20, 21, 22, 23, 24, 25],
+            ticket: [75.00, 76.20, 76.40, 76.10, 75.60, 75.20],
+        },
+        diarioPlano: [
+            [2, 2, 66], [4, 2, 76], [5, 1, 74], [7, 1, 76], [9, 2, 78],
+            [11, 1, 72], [12, 1, 75], [14, 2, 77], [16, 1, 74], [18, 1, 76],
+            [19, 2, 79], [21, 1, 73], [23, 1, 72], [24, 2, 78], [26, 1, 74],
+            [28, 2, 76], [30, 2, 77],
+        ],
+    };
+
+    const formatPtNumber = (value, fractionDigits) => {
+        return Number(value).toLocaleString('pt-BR', {
+            minimumFractionDigits: fractionDigits,
+            maximumFractionDigits: fractionDigits,
+        });
+    };
+
+    const formatMoney = (value) => `R$ ${formatPtNumber(value, 2)}`;
+    const keyCounters = {};
+    const fakeFieldValues = {
+        'kpi-faturamento-liquido': formatMoney(demoScenario.faturamentoLiquido),
+        'kpi-faturamento-bruto': formatMoney(demoScenario.faturamentoBruto),
+        'kpi-taxas': formatMoney(demoScenario.taxas),
+        'kpi-impacto-taxas': `${formatPtNumber(demoScenario.impactoTaxas, 2)}%`,
+        'kpi-comissao': formatMoney(demoScenario.comissao),
+        'kpi-pos-comissao': formatMoney(demoScenario.posComissao),
+        'kpi-despesas': formatMoney(demoScenario.despesas),
+        'kpi-lucro': formatMoney(demoScenario.lucro),
+        'kpi-ticket': formatMoney(demoScenario.ticketMedio),
+        'kpi-atendimentos': `${demoScenario.atendimentos}`,
+        'produto-venda-bruta': formatMoney(demoScenario.produto.vendaBruta),
+        'produto-taxa': formatMoney(demoScenario.produto.taxa),
+        'produto-venda-liquida': formatMoney(demoScenario.produto.vendaLiquida),
+        'produto-custo': formatMoney(demoScenario.produto.custo),
+        'produto-lucro': formatMoney(demoScenario.produto.lucro),
+        'meta-valor': formatMoney(demoScenario.meta.valor),
+        'meta-realizado': formatMoney(demoScenario.meta.realizado),
+        'meta-faltante': formatMoney(demoScenario.meta.faltante),
+    };
+    const fakeGroupedRawValues = {
+        'ranking-qtd': demoScenario.ranking.qtd,
+        'ranking-total': demoScenario.ranking.total,
+        'despesa-categoria-total': demoScenario.despesasCategoria,
+        'despesa-subcategoria-total': demoScenario.despesasSubcategoria,
+        'alerta-saldo': demoScenario.estoque.saldo,
+        'alerta-minimo': demoScenario.estoque.minimo,
+        'alerta-custo': demoScenario.estoque.custo,
+    };
+
+    const fitSeries = (template, targetLength) => {
+        if (targetLength <= 0) return [];
+        if (!template.length) return Array.from({ length: targetLength }, () => 0);
+        if (template.length === targetLength) return template.slice();
+        if (targetLength === 1) return [template[template.length - 1]];
+
+        const maxIndex = template.length - 1;
+        return Array.from({ length: targetLength }, (_, index) => {
+            const position = (index / (targetLength - 1)) * maxIndex;
+            const low = Math.floor(position);
+            const high = Math.ceil(position);
+            if (low === high) return Number(template[low]);
+            const ratio = position - low;
+            const interpolated = template[low] + (template[high] - template[low]) * ratio;
+            return Number(interpolated.toFixed(2));
+        });
+    };
+
+    const fallbackRawValueByKey = (key, index) => {
+        if (key === 'ranking-qtd') return Math.max(1, 3 - Math.floor(index / 3));
+        if (key === 'ranking-total') return Math.max(90, 170 - (index * 18));
+        if (key === 'despesa-categoria-total') return Math.max(70, 130 - (index * 20));
+        if (key === 'despesa-subcategoria-total') return Math.max(45, 95 - (index * 14));
+        if (key === 'alerta-saldo') return Math.max(0.180, 0.650 - (index * 0.07));
+        if (key === 'alerta-minimo') return Math.max(0.700, 1.350 - (index * 0.05));
+        if (key === 'alerta-custo') return Math.max(6.50, 14.50 - (index * 0.65));
+        return 0;
+    };
+
+    const formatByType = (value, type) => {
+        if (type === 'count') return `${Math.round(Number(value))}`;
+        if (type === 'percent') return `${formatPtNumber(Number(value), 2)}%`;
+        if (type === 'quantity3') return formatPtNumber(Number(value), 3);
+        return formatMoney(Number(value));
+    };
+
+    const resolveFakeText = (key, type, index) => {
+        if (key && fakeFieldValues[key]) return fakeFieldValues[key];
+        if (!key) return formatByType(type === 'count' ? 5 : type === 'percent' ? 12 : 140, type);
+        const groupValues = fakeGroupedRawValues[key] || [];
+        const raw = groupValues[index] !== undefined ? groupValues[index] : fallbackRawValueByKey(key, index);
+        return formatByType(raw, type);
+    };
+
+    const buildDailyDemoSeries = (daysCount) => {
+        const atendimentosSerie = Array.from({ length: daysCount }, () => 0);
+        const faturamentoSerie = Array.from({ length: daysCount }, () => 0);
+
+        demoScenario.diarioPlano.forEach(([day, qtd, ticket]) => {
+            if (daysCount <= 0) return;
+            const safeDay = Math.min(Math.max(1, day), daysCount);
+            const index = safeDay - 1;
+            atendimentosSerie[index] += qtd;
+            faturamentoSerie[index] = Number((faturamentoSerie[index] + (qtd * ticket)).toFixed(2));
+        });
+
+        return {
+            atendimentos: atendimentosSerie,
+            faturamento: faturamentoSerie,
+        };
+    };
+
+    const registerChart = (chart, fakeSeriesTemplate) => {
+        const originalSeries = chart.data.datasets.map((dataset) => dataset.data.map((item) => Number(item || 0)));
+        const fakeSeries = originalSeries.map((values, index) => {
+            const fakeTemplate = fakeSeriesTemplate[index] || [];
+            return fitSeries(fakeTemplate.map((item) => Number(item || 0)), values.length);
+        });
+        chartBindings.push({ chart, originalSeries, fakeSeries });
+    };
+
+    const applySensitiveTexts = (useFake) => {
+        sensitiveNodes.forEach((node) => {
+            node.textContent = useFake ? node.dataset.fakeText : node.dataset.realText;
+        });
+    };
+
+    const applyCharts = (useFake) => {
+        chartBindings.forEach((binding) => {
+            const source = useFake ? binding.fakeSeries : binding.originalSeries;
+            binding.chart.data.datasets.forEach((dataset, index) => {
+                dataset.data = source[index].slice();
+            });
+            binding.chart.update('none');
+        });
+
+        if (!metaChartInstance) return;
+        const percentualReal = Number(metaBullet.percentual_real || 0);
+        const percentualFake = Number(demoScenario.meta.percentual);
+        const semicircleReal = metaBullet.tem_meta ? Math.max(0, Math.min(100, percentualReal)) : 0;
+        const semicircleFake = Math.max(0, Math.min(100, percentualFake));
+
+        metaPercentualDisplay = useFake ? percentualFake : percentualReal;
+        const value = useFake ? semicircleFake : semicircleReal;
+        metaChartInstance.data.datasets[0].data = [value, 100 - value];
+        metaChartInstance.update('none');
+    };
+
+    const applyMetaFieldPrivacy = (useFake) => {
+        if (!metaInput) return;
+        if (useFake) {
+            metaInput.dataset.realValue = metaInput.value;
+            metaInput.value = demoScenario.meta.input;
+            metaInput.readOnly = true;
+            metaInput.classList.add('text-muted');
+            if (metaSaveButton) {
+                metaSaveButton.disabled = true;
+                metaSaveButton.title = 'Desative o modo demonstração para editar a meta.';
+            }
+            if (metaPrivacyHint) {
+                metaPrivacyHint.classList.add('is-visible');
+            }
+            return;
+        }
+
+        if (metaInput.dataset.realValue !== undefined) {
+            metaInput.value = metaInput.dataset.realValue;
+        }
+        metaInput.readOnly = false;
+        metaInput.classList.remove('text-muted');
+        if (metaSaveButton) {
+            metaSaveButton.disabled = false;
+            metaSaveButton.removeAttribute('title');
+        }
+        if (metaPrivacyHint) {
+            metaPrivacyHint.classList.remove('is-visible');
+        }
+    };
+
+    const renderPrivacyState = () => {
+        if (!privacyButton) return;
+        privacyButton.classList.toggle('is-fake', fakeMode);
+        privacyButton.setAttribute('aria-pressed', fakeMode ? 'true' : 'false');
+        const toggleTitle = fakeMode ? 'Voltar para dados reais' : 'Ativar modo demonstração';
+        privacyButton.setAttribute('title', toggleTitle);
+        privacyButton.setAttribute('aria-label', toggleTitle);
+        if (fakeProductsNote) {
+            fakeProductsNote.classList.toggle('is-visible', fakeMode);
+            fakeProductsNote.textContent = `Simulação: ${demoScenario.produto.qtdVendida} produtos vendidos no mês.`;
+        }
+    };
+
+    sensitiveNodes.forEach((node) => {
+        const type = node.dataset.sensitiveType || 'money';
+        const key = node.dataset.sensitiveKey || '';
+        const index = keyCounters[key] || 0;
+        keyCounters[key] = index + 1;
+        node.dataset.realText = node.textContent.trim();
+        node.dataset.fakeText = resolveFakeText(key, type, index);
+    });
 
     const moneyTick = (value) => {
         return 'R$ ' + Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -400,7 +713,7 @@
 
     const comparativoCtx = document.getElementById('comparativoChart');
     if (comparativoCtx) {
-        new Chart(comparativoCtx, {
+        const comparativoChart = new Chart(comparativoCtx, {
             type: 'line',
             data: {
                 labels: comparativo.labels,
@@ -458,6 +771,12 @@
                 },
             },
         });
+        registerChart(comparativoChart, [
+            demoScenario.comparativo.faturamento,
+            demoScenario.comparativo.taxas,
+            demoScenario.comparativo.despesas,
+            demoScenario.comparativo.lucro,
+        ]);
     }
 
     const metaBulletCtx = document.getElementById('metaBulletChart');
@@ -477,14 +796,14 @@
                 ctx.textBaseline = 'middle';
                 ctx.fillStyle = '#4a3945';
                 ctx.font = '700 24px Nunito, sans-serif';
-                ctx.fillText(`${percentualReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`, centerX, centerY);
+                ctx.fillText(`${metaPercentualDisplay.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`, centerX, centerY);
                 ctx.font = '600 12px DM Sans, sans-serif';
                 ctx.fillStyle = '#7a6f80';
                 ctx.fillText('da meta', centerX, centerY + 18);
                 ctx.restore();
             },
         };
-        new Chart(metaBulletCtx, {
+        metaChartInstance = new Chart(metaBulletCtx, {
             type: 'doughnut',
             data: {
                 labels: ['Atingido', 'Restante'],
@@ -517,7 +836,7 @@
 
     const operacaoCtx = document.getElementById('operacaoChart');
     if (operacaoCtx) {
-        new Chart(operacaoCtx, {
+        const operacaoChart = new Chart(operacaoCtx, {
             data: {
                 labels: operacao.labels,
                 datasets: [
@@ -562,11 +881,16 @@
                 },
             },
         });
+        registerChart(operacaoChart, [
+            demoScenario.operacao.atendimentos,
+            demoScenario.operacao.ticket,
+        ]);
     }
 
     const atendimentosDiaCtx = document.getElementById('atendimentosDiaChart');
     if (atendimentosDiaCtx) {
-        new Chart(atendimentosDiaCtx, {
+        const dailyFake = buildDailyDemoSeries(atendimentosDia.labels.length);
+        const atendimentosDiaChart = new Chart(atendimentosDiaCtx, {
             data: {
                 labels: atendimentosDia.labels,
                 datasets: [
@@ -610,6 +934,21 @@
                     },
                 },
             },
+        });
+        registerChart(atendimentosDiaChart, [
+            dailyFake.atendimentos,
+            dailyFake.faturamento,
+        ]);
+    }
+
+    renderPrivacyState();
+    if (privacyButton) {
+        privacyButton.addEventListener('click', () => {
+            fakeMode = !fakeMode;
+            applySensitiveTexts(fakeMode);
+            applyCharts(fakeMode);
+            applyMetaFieldPrivacy(fakeMode);
+            renderPrivacyState();
         });
     }
 })();
