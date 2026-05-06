@@ -285,7 +285,7 @@ class SalaoViewsTests(TestCase):
         workbook = load_workbook(filename=BytesIO(response.content))
         sheet = workbook.active
 
-        headers = [sheet.cell(row=1, column=col).value for col in range(1, 9)]
+        headers = [sheet.cell(row=1, column=col).value for col in range(1, 11)]
         self.assertEqual(
             headers,
             [
@@ -293,6 +293,8 @@ class SalaoViewsTests(TestCase):
                 'Servico',
                 'Forma de pagamento',
                 'Valor',
+                'Parcelas',
+                'Taxa (%)',
                 'Valor taxa',
                 'Valor liquido',
                 'Valor 20%',
@@ -302,22 +304,24 @@ class SalaoViewsTests(TestCase):
 
         self.assertEqual(sheet.max_row, 5)
 
-        primeira_linha = [sheet.cell(row=2, column=col).value for col in range(1, 9)]
+        primeira_linha = [sheet.cell(row=2, column=col).value for col in range(1, 11)]
         self.assertEqual(primeira_linha[0], '10/03/2026')
         self.assertEqual(primeira_linha[2], self.forma_debito.nome)
         self.assertAlmostEqual(primeira_linha[3], 100.00, places=2)
-        self.assertAlmostEqual(primeira_linha[4], 3.00, places=2)
-        self.assertAlmostEqual(primeira_linha[5], 97.00, places=2)
-        self.assertAlmostEqual(primeira_linha[6], 19.40, places=2)
-        self.assertAlmostEqual(primeira_linha[7], 77.60, places=2)
+        self.assertEqual(primeira_linha[4], 1)
+        self.assertAlmostEqual(primeira_linha[5], 3.00, places=2)
+        self.assertAlmostEqual(primeira_linha[6], 3.00, places=2)
+        self.assertAlmostEqual(primeira_linha[7], 97.00, places=2)
+        self.assertAlmostEqual(primeira_linha[8], 19.40, places=2)
+        self.assertAlmostEqual(primeira_linha[9], 77.60, places=2)
 
-        total_linha = [sheet.cell(row=5, column=col).value for col in range(1, 9)]
+        total_linha = [sheet.cell(row=5, column=col).value for col in range(1, 11)]
         self.assertEqual(total_linha[0], 'TOTAL')
         self.assertAlmostEqual(total_linha[3], 180.00, places=2)
-        self.assertAlmostEqual(total_linha[4], 3.00, places=2)
-        self.assertAlmostEqual(total_linha[5], 177.00, places=2)
-        self.assertAlmostEqual(total_linha[6], 35.40, places=2)
-        self.assertAlmostEqual(total_linha[7], 141.60, places=2)
+        self.assertAlmostEqual(total_linha[6], 3.00, places=2)
+        self.assertAlmostEqual(total_linha[7], 177.00, places=2)
+        self.assertAlmostEqual(total_linha[8], 35.40, places=2)
+        self.assertAlmostEqual(total_linha[9], 141.60, places=2)
 
     def test_lancamento_codigo_invalido_bloqueia_save(self):
         self._login()

@@ -1787,6 +1787,8 @@ def dashboard_relatorio_lancamentos(request):
         'Servico',
         'Forma de pagamento',
         'Valor',
+        'Parcelas',
+        'Taxa (%)',
         'Valor taxa',
         'Valor liquido',
         'Valor 20%',
@@ -1825,6 +1827,8 @@ def dashboard_relatorio_lancamentos(request):
                 lancamento.servico.nome if lancamento.servico else '',
                 lancamento.forma_pagamento.nome if lancamento.forma_pagamento else 'Nao informado',
                 float(valor),
+                int(lancamento.parcelas or 1),
+                float(lancamento.taxa_percentual_aplicada or Decimal('0.00')),
                 float(valor_taxa),
                 float(valor_liquido),
                 float(valor_20),
@@ -1835,21 +1839,23 @@ def dashboard_relatorio_lancamentos(request):
     total_row_idx = sheet.max_row + 2
     sheet.cell(row=total_row_idx, column=1, value='TOTAL')
     sheet.cell(row=total_row_idx, column=4, value=float(total_valor))
-    sheet.cell(row=total_row_idx, column=5, value=float(total_taxa))
-    sheet.cell(row=total_row_idx, column=6, value=float(total_liquido))
-    sheet.cell(row=total_row_idx, column=7, value=float(total_20))
-    sheet.cell(row=total_row_idx, column=8, value=float(total_pos_20))
-    for col in (1, 4, 5, 6, 7, 8):
+    sheet.cell(row=total_row_idx, column=7, value=float(total_taxa))
+    sheet.cell(row=total_row_idx, column=8, value=float(total_liquido))
+    sheet.cell(row=total_row_idx, column=9, value=float(total_20))
+    sheet.cell(row=total_row_idx, column=10, value=float(total_pos_20))
+    for col in (1, 4, 7, 8, 9, 10):
         sheet.cell(row=total_row_idx, column=col).font = Font(bold=True)
 
     sheet.column_dimensions['A'].width = 13
     sheet.column_dimensions['B'].width = 26
     sheet.column_dimensions['C'].width = 22
     sheet.column_dimensions['D'].width = 13
-    sheet.column_dimensions['E'].width = 13
-    sheet.column_dimensions['F'].width = 13
+    sheet.column_dimensions['E'].width = 10
+    sheet.column_dimensions['F'].width = 10
     sheet.column_dimensions['G'].width = 13
-    sheet.column_dimensions['H'].width = 16
+    sheet.column_dimensions['H'].width = 13
+    sheet.column_dimensions['I'].width = 13
+    sheet.column_dimensions['J'].width = 16
 
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
