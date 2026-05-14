@@ -703,12 +703,23 @@ def despesas(request):
             gera_estoque = _parse_checkbox(request.POST.get('gera_estoque'))
 
             itens = []
+            custos_adicionais = Decimal('0.00')
             if gera_estoque:
                 itens, erro_itens = _parse_compra_itens(request)
                 if erro_itens:
                     messages.error(request, erro_itens)
                     return _redirect_despesas(ano, mes)
-                valor = _quantize_money(sum((item['custo_total'] for item in itens), Decimal('0.00')))
+                raw_custos_adicionais = (request.POST.get('custos_adicionais') or '').strip()
+                if raw_custos_adicionais:
+                    custos_adicionais = _parse_decimal(raw_custos_adicionais)
+                    if custos_adicionais is None:
+                        messages.error(request, 'Informe um valor válido para custos adicionais.')
+                        return _redirect_despesas(ano, mes)
+                if custos_adicionais < Decimal('0.00'):
+                    messages.error(request, 'Informe um valor válido para custos adicionais.')
+                    return _redirect_despesas(ano, mes)
+                valor_itens = _quantize_money(sum((item['custo_total'] for item in itens), Decimal('0.00')))
+                valor = _quantize_money(valor_itens + custos_adicionais)
             else:
                 valor = _parse_decimal(request.POST.get('valor'))
                 if valor is None or valor < Decimal('0.00'):
@@ -725,6 +736,7 @@ def despesas(request):
                         data=data_despesa,
                         categoria_fornecedor=categoria,
                         valor_total=valor,
+                        custos_adicionais=custos_adicionais,
                         parcelas_total=parcelas,
                         grupo_parcelamento_id=grupo_parcelamento_id,
                         observacao=observacao,

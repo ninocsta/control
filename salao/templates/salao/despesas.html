@@ -1,6 +1,66 @@
 {% extends 'salao/base.html' %}
+{% load static %}
 
 {% block title %}Despesas | Salão{% endblock %}
+{% block extra_head %}
+<style>
+    #estoque-items-wrapper .compra-estoque-box {
+        padding: .45rem !important;
+        overflow: hidden;
+    }
+
+    #estoque-items-wrapper #itens-container {
+        gap: .45rem !important;
+    }
+
+    #estoque-items-wrapper .item-row {
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    #estoque-items-wrapper .item-row + .item-row {
+        margin-top: .45rem;
+    }
+
+    #estoque-items-wrapper .item-row > [class*="col-"] {
+        padding-left: .3rem;
+        padding-right: .3rem;
+    }
+
+    #estoque-items-wrapper .js-remove-item {
+        min-height: 40px;
+        padding: .3rem .55rem;
+    }
+
+    #estoque-items-wrapper .select2-container .select2-selection--single {
+        min-height: 44px;
+        height: 44px;
+        border: 1.5px solid #ebccd7;
+        border-radius: 13px;
+        display: flex;
+        align-items: center;
+    }
+
+    #estoque-items-wrapper .select2-container--default .select2-selection--single .select2-selection__rendered {
+        line-height: 42px !important;
+        padding-left: .82rem;
+        padding-right: 2rem;
+    }
+
+    #estoque-items-wrapper .select2-container--default .select2-selection--single .select2-selection__clear {
+        height: 42px;
+        margin-right: 1.4rem;
+    }
+
+    #estoque-items-wrapper .select2-container .select2-selection__arrow {
+        height: auto;
+        top: 50%;
+        transform: translateY(-50%);
+        right: .45rem;
+    }
+</style>
+<link rel="stylesheet" href="{% static 'vendor/select2/css/select2.min.css' %}">
+{% endblock %}
 
 {% block content %}
 {{ subcategorias_catalogo|json_script:'subcategorias-despesa-json' }}
@@ -79,15 +139,15 @@
                         <div class="small text-muted">Categoria continua sendo o fornecedor da compra.</div>
                     </div>
                     <div class="col-12 d-none" id="estoque-items-wrapper">
-                        <div class="border rounded-3 p-2 bg-light-subtle">
+                        <div class="border rounded-3 bg-light-subtle compra-estoque-box">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <strong>Itens da compra</strong>
                                 <button type="button" class="btn btn-sm btn-outline-primary" id="btn-add-item">Adicionar item</button>
                             </div>
                             <div id="itens-container" class="d-flex flex-column gap-2">
-                                <div class="row g-2 item-row">
+                                <div class="row gx-2 gy-1 item-row">
                                     <div class="col-md-5">
-                                        <select class="form-select" name="produto_id[]">
+                                        <select class="form-select js-produto-select" name="produto_id[]">
                                             <option value="">Produto</option>
                                             {% for produto in produtos_ativos %}
                                                 <option value="{{ produto.id }}">{{ produto.codigo }} - {{ produto.nome }}</option>
@@ -105,8 +165,14 @@
                                     </div>
                                 </div>
                             </div>
+                            <div class="row g-2 mt-1">
+                                <div class="col-md-4">
+                                    <label class="form-label mb-1">Custos adicionais</label>
+                                    <input class="form-control" name="custos_adicionais" inputmode="decimal" placeholder="0,00" value="0,00">
+                                </div>
+                            </div>
                             <div class="small text-muted mt-2">
-                                O valor total da despesa será calculado pelos itens.
+                                O valor total da despesa será calculado por: itens + custos adicionais.
                             </div>
                         </div>
                     </div>
@@ -245,6 +311,8 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'admin/js/vendor/jquery/jquery.min.js' %}"></script>
+<script src="{% static 'vendor/select2/js/select2.min.js' %}"></script>
 <script>
 (function () {
     const createForm = document.querySelector('form input[name="action"][value="create_despesa"]');
@@ -256,11 +324,18 @@
     const categoriaEditSelect = document.getElementById('id_categoria_edit');
     const subcategoriaEditSelect = document.getElementById('id_subcategoria_edit');
     const valorInput = form.querySelector('input[name="valor"]');
+    const custosAdicionaisInput = form.querySelector('input[name="custos_adicionais"]');
     const shortcuts = form.querySelectorAll('.js-categoria-atalho');
     const geraEstoqueCheckbox = form.querySelector('input[name="gera_estoque"]');
     const estoqueItemsWrapper = document.getElementById('estoque-items-wrapper');
     const itensContainer = document.getElementById('itens-container');
     const btnAddItem = document.getElementById('btn-add-item');
+    const hasSelect2 = Boolean(window.jQuery && window.jQuery.fn && window.jQuery.fn.select2);
+    const updateActionInput = document.querySelector('form input[name="action"][value="update_despesa"]');
+    const formsToBlockEnter = [form];
+    if (updateActionInput && updateActionInput.closest('form')) {
+        formsToBlockEnter.push(updateActionInput.closest('form'));
+    }
     const subcategoriasNode = document.getElementById('subcategorias-despesa-json');
     const subcategorias = subcategoriasNode ? JSON.parse(subcategoriasNode.textContent) : [];
     const produtosOptions = `{% for produto in produtos_ativos %}<option value="{{ produto.id }}">{{ produto.codigo }} - {{ produto.nome }}</option>{% endfor %}`;
@@ -306,16 +381,25 @@
             const custo = parseDecimal(row.querySelector('.js-item-custo')?.value);
             total += qtd * custo;
         });
+        total += parseDecimal(custosAdicionaisInput?.value);
         valorInput.value = formatDecimal(total);
     };
 
     const bindRowEvents = (row) => {
         const removeBtn = row.querySelector('.js-remove-item');
+        const produtoSelect = row.querySelector('.js-produto-select');
         if (removeBtn) {
             removeBtn.addEventListener('click', () => {
                 const rows = itensContainer.querySelectorAll('.item-row');
                 if (rows.length === 1) {
-                    row.querySelectorAll('input, select').forEach((field) => { field.value = ''; });
+                    row.querySelectorAll('input').forEach((field) => { field.value = ''; });
+                    if (produtoSelect) {
+                        if (hasSelect2) {
+                            window.jQuery(produtoSelect).val('').trigger('change');
+                        } else {
+                            produtoSelect.value = '';
+                        }
+                    }
                 } else {
                     row.remove();
                 }
@@ -330,10 +414,10 @@
 
     const createItemRow = () => {
         const wrapper = document.createElement('div');
-        wrapper.className = 'row g-2 item-row';
+        wrapper.className = 'row gx-2 gy-1 item-row';
         wrapper.innerHTML = `
             <div class="col-md-5">
-                <select class="form-select" name="produto_id[]">
+                <select class="form-select js-produto-select" name="produto_id[]">
                     <option value="">Produto</option>
                     ${produtosOptions}
                 </select>
@@ -349,7 +433,19 @@
             </div>
         `;
         bindRowEvents(wrapper);
+        initProdutoSelect(wrapper.querySelector('.js-produto-select'));
         return wrapper;
+    };
+
+    const initProdutoSelect = (selectEl) => {
+        if (!selectEl || !hasSelect2) return;
+        const $select = window.jQuery(selectEl);
+        if ($select.hasClass('select2-hidden-accessible')) return;
+        $select.select2({
+            width: '100%',
+            placeholder: 'Produto',
+            allowClear: true,
+        });
     };
 
     const updateStockMode = () => {
@@ -371,7 +467,20 @@
         });
     }
 
+    formsToBlockEnter.forEach((currentForm) => {
+        currentForm.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+            }
+        });
+    });
+
     itensContainer.querySelectorAll('.item-row').forEach(bindRowEvents);
+    itensContainer.querySelectorAll('.js-produto-select').forEach(initProdutoSelect);
+    if (custosAdicionaisInput) {
+        custosAdicionaisInput.addEventListener('input', updateValorByItens);
+        custosAdicionaisInput.addEventListener('change', updateValorByItens);
+    }
     geraEstoqueCheckbox.addEventListener('change', updateStockMode);
     categoriaSelect.addEventListener('change', () => {
         updateSubcategorias(categoriaSelect.value, subcategoriaSelect, '');
