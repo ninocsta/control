@@ -141,18 +141,27 @@ class SalaoViewsTests(TestCase):
         forma_pagamento=None,
         parcelas=1,
         taxa_percentual=Decimal('0.00'),
+        permuta=False,
     ):
-        forma = forma_pagamento or self.forma_dinheiro
-        valor_taxa = (valor_bruto * taxa_percentual / Decimal('100.00')).quantize(
-            Decimal('0.01'),
-            rounding=ROUND_HALF_UP,
-        )
-        valor_liquido = (valor_bruto - valor_taxa).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        if permuta:
+            forma = self.forma_nao_informado
+            parcelas = 1
+            taxa_percentual = Decimal('0.00')
+            valor_taxa = Decimal('0.00')
+            valor_liquido = valor_bruto.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        else:
+            forma = forma_pagamento or self.forma_dinheiro
+            valor_taxa = (valor_bruto * taxa_percentual / Decimal('100.00')).quantize(
+                Decimal('0.01'),
+                rounding=ROUND_HALF_UP,
+            )
+            valor_liquido = (valor_bruto - valor_taxa).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         return LancamentoSalao.objects.create(
             data=data,
             servico=self.servico,
             forma_pagamento=forma,
             parcelas=parcelas,
+            permuta=permuta,
             valor_bruto=valor_bruto,
             taxa_percentual_aplicada=taxa_percentual,
             valor_taxa=valor_taxa,
@@ -199,6 +208,7 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.context['comissao_calculada'], Decimal('60.00'))
         self.assertEqual(response.context['despesas_total'], Decimal('50.00'))
         self.assertEqual(response.context['lucro'], Decimal('190.00'))
+        self.assertEqual(response.context['permuta_total_mes'], Decimal('0.00'))
         self.assertIn('meta_bullet_chart', response.context)
 
     def test_dashboard_ignora_override_e_usa_comissao_automatica(self):
@@ -264,6 +274,11 @@ class SalaoViewsTests(TestCase):
             taxa_percentual=Decimal('0.00'),
         )
         self._create_lancamento(
+            data=date(2026, 3, 12),
+            valor_bruto=Decimal('40.00'),
+            permuta=True,
+        )
+        self._create_lancamento(
             data=date(2026, 2, 5),
             valor_bruto=Decimal('500.00'),
             forma_pagamento=self.forma_pix,
@@ -285,12 +300,13 @@ class SalaoViewsTests(TestCase):
         workbook = load_workbook(filename=BytesIO(response.content))
         sheet = workbook.active
 
-        headers = [sheet.cell(row=1, column=col).value for col in range(1, 11)]
+        headers = [sheet.cell(row=1, column=col).value for col in range(1, 12)]
         self.assertEqual(
             headers,
             [
                 'Data',
                 'Servico',
+                'Tipo',
                 'Forma de pagamento',
                 'Valor',
                 'Parcelas',
@@ -302,26 +318,34 @@ class SalaoViewsTests(TestCase):
             ],
         )
 
-        self.assertEqual(sheet.max_row, 5)
+        self.assertEqual(sheet.max_row, 6)
 
-        primeira_linha = [sheet.cell(row=2, column=col).value for col in range(1, 11)]
+        primeira_linha = [sheet.cell(row=2, column=col).value for col in range(1, 12)]
         self.assertEqual(primeira_linha[0], '10/03/2026')
-        self.assertEqual(primeira_linha[2], self.forma_debito.nome)
-        self.assertAlmostEqual(primeira_linha[3], 100.00, places=2)
-        self.assertEqual(primeira_linha[4], 1)
-        self.assertAlmostEqual(primeira_linha[5], 3.00, places=2)
+        self.assertEqual(primeira_linha[2], 'NORMAL')
+        self.assertEqual(primeira_linha[3], self.forma_debito.nome)
+        self.assertAlmostEqual(primeira_linha[4], 100.00, places=2)
+        self.assertEqual(primeira_linha[5], 1)
         self.assertAlmostEqual(primeira_linha[6], 3.00, places=2)
-        self.assertAlmostEqual(primeira_linha[7], 97.00, places=2)
-        self.assertAlmostEqual(primeira_linha[8], 19.40, places=2)
-        self.assertAlmostEqual(primeira_linha[9], 77.60, places=2)
+        self.assertAlmostEqual(primeira_linha[7], 3.00, places=2)
+        self.assertAlmostEqual(primeira_linha[8], 97.00, places=2)
+        self.assertAlmostEqual(primeira_linha[9], 19.40, places=2)
+        self.assertAlmostEqual(primeira_linha[10], 77.60, places=2)
 
-        total_linha = [sheet.cell(row=5, column=col).value for col in range(1, 11)]
+        linha_permuta = [sheet.cell(row=4, column=col).value for col in range(1, 12)]
+        self.assertEqual(linha_permuta[2], 'PERMUTA')
+        self.assertAlmostEqual(linha_permuta[4], 40.00, places=2)
+        self.assertAlmostEqual(linha_permuta[7], 0.00, places=2)
+        self.assertAlmostEqual(linha_permuta[9], 0.00, places=2)
+        self.assertAlmostEqual(linha_permuta[10], 40.00, places=2)
+
+        total_linha = [sheet.cell(row=6, column=col).value for col in range(1, 12)]
         self.assertEqual(total_linha[0], 'TOTAL')
-        self.assertAlmostEqual(total_linha[3], 180.00, places=2)
-        self.assertAlmostEqual(total_linha[6], 3.00, places=2)
-        self.assertAlmostEqual(total_linha[7], 177.00, places=2)
-        self.assertAlmostEqual(total_linha[8], 35.40, places=2)
-        self.assertAlmostEqual(total_linha[9], 141.60, places=2)
+        self.assertAlmostEqual(total_linha[4], 220.00, places=2)
+        self.assertAlmostEqual(total_linha[7], 3.00, places=2)
+        self.assertAlmostEqual(total_linha[8], 217.00, places=2)
+        self.assertAlmostEqual(total_linha[9], 35.40, places=2)
+        self.assertAlmostEqual(total_linha[10], 181.60, places=2)
 
     def test_lancamento_codigo_invalido_bloqueia_save(self):
         self._login()
@@ -405,6 +429,34 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(lanc.valor_bruto, Decimal('100.00'))
         self.assertEqual(lanc.valor_taxa, Decimal('3.00'))
         self.assertEqual(lanc.valor_cobrado, Decimal('97.00'))
+        self.assertFalse(lanc.permuta)
+
+    def test_lancamento_permuta_forca_nao_informado_sem_taxa(self):
+        self._login()
+
+        response = self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'create_lancamento',
+                'ano': 2026,
+                'mes': 3,
+                'dia': 10,
+                'codigo': 'c01',
+                'codigo_forma_pagamento': '4',
+                'parcelas': 12,
+                'permuta': 'on',
+                'valor_bruto': '120,00',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        lanc = LancamentoSalao.objects.get()
+        self.assertTrue(lanc.permuta)
+        self.assertEqual(lanc.forma_pagamento_id, self.forma_nao_informado.id)
+        self.assertEqual(lanc.parcelas, 1)
+        self.assertEqual(lanc.taxa_percentual_aplicada, Decimal('0.00'))
+        self.assertEqual(lanc.valor_taxa, Decimal('0.00'))
+        self.assertEqual(lanc.valor_cobrado, Decimal('120.00'))
 
     def test_endpoint_refresh_lancamentos_por_dia_retorna_rows_html(self):
         self._login()
@@ -475,6 +527,65 @@ class SalaoViewsTests(TestCase):
         )
         self.assertEqual(delete_response.status_code, 302)
         self.assertEqual(LancamentoSalao.objects.count(), 0)
+
+    def test_editar_lancamento_alterna_normal_e_permuta(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 10),
+            valor_bruto=Decimal('120.00'),
+            forma_pagamento=self.forma_credito,
+            parcelas=2,
+            taxa_percentual=Decimal('5.00'),
+        )
+
+        to_permuta = self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'update_lancamento',
+                'lancamento_id': lancamento.id,
+                'ano': 2026,
+                'mes': 3,
+                'dia': 10,
+                'data': '2026-03-10',
+                'servico_id': self.servico.id,
+                'forma_pagamento_id': self.forma_credito.id,
+                'parcelas': 2,
+                'permuta': 'on',
+                'valor_bruto': '200,00',
+            },
+        )
+        self.assertEqual(to_permuta.status_code, 302)
+
+        lancamento.refresh_from_db()
+        self.assertTrue(lancamento.permuta)
+        self.assertEqual(lancamento.forma_pagamento_id, self.forma_nao_informado.id)
+        self.assertEqual(lancamento.parcelas, 1)
+        self.assertEqual(lancamento.valor_taxa, Decimal('0.00'))
+        self.assertEqual(lancamento.valor_cobrado, Decimal('200.00'))
+
+        to_normal = self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'update_lancamento',
+                'lancamento_id': lancamento.id,
+                'ano': 2026,
+                'mes': 3,
+                'dia': 10,
+                'data': '2026-03-11',
+                'servico_id': self.servico.id,
+                'forma_pagamento_id': self.forma_debito.id,
+                'parcelas': 1,
+                'valor_bruto': '200,00',
+            },
+        )
+        self.assertEqual(to_normal.status_code, 302)
+        lancamento.refresh_from_db()
+        self.assertFalse(lancamento.permuta)
+        self.assertEqual(lancamento.forma_pagamento_id, self.forma_debito.id)
+        self.assertEqual(lancamento.parcelas, 1)
+        self.assertEqual(lancamento.taxa_percentual_aplicada, Decimal('3.00'))
+        self.assertEqual(lancamento.valor_taxa, Decimal('6.00'))
+        self.assertEqual(lancamento.valor_cobrado, Decimal('194.00'))
 
     def test_criar_despesa_parcelada_em_4x(self):
         self._login()
@@ -963,6 +1074,36 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.context['vendas_produto_liquidas'], Decimal('50.00'))
         self.assertEqual(response.context['lucro_produto'], Decimal('40.00'))
 
+    def test_dashboard_permuta_separada_sem_impactar_lucro(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 10),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+            taxa_percentual=Decimal('0.00'),
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 11),
+            valor_bruto=Decimal('80.00'),
+            permuta=True,
+        )
+        DespesaSalao.objects.create(
+            data=date(2026, 3, 12),
+            categoria=self.categoria,
+            valor=Decimal('30.00'),
+        )
+
+        response = self.client.get(reverse('salao:dashboard'), {'ano': 2026, 'mes': 3})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['faturamento_bruto'], Decimal('100.00'))
+        self.assertEqual(response.context['permuta_total_mes'], Decimal('80.00'))
+        self.assertEqual(response.context['comissao_calculada'], Decimal('20.00'))
+        self.assertEqual(response.context['lucro'], Decimal('50.00'))
+        self.assertEqual(response.context['atendimentos_total'], 2)
+        self.assertEqual(response.context['ticket_permuta'], Decimal('80.00'))
+        self.assertEqual(response.context['atendimentos_permuta_total'], 1)
+        self.assertIn('permuta_chart', response.context)
+
     def test_dashboard_agrupa_despesas_por_subcategoria(self):
         self._login()
         DespesaSalao.objects.create(
@@ -1007,6 +1148,20 @@ class SalaoViewsTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.context['page_obj'].object_list), 1)
+
+    def test_grid_lancamentos_exibe_permuta(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 10),
+            valor_bruto=Decimal('90.00'),
+            permuta=True,
+        )
+        response = self.client.get(
+            reverse('salao:grid_lancamentos'),
+            {'ano': 2026, 'mes': 3},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'PERMUTA')
 
     def test_grid_despesas_filtra_por_categoria_e_subcategoria(self):
         self._login()

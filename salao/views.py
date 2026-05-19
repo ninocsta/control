@@ -251,6 +251,10 @@ def _build_formas_catalogo(formas):
     return catalogo
 
 
+def _forma_pagamento_nao_informado_ativa():
+    return FormaPagamentoSalao.objects.filter(codigo='0', ativo=True).first()
+
+
 def _calcular_liquido_com_taxa(valor_bruto, percentual):
     valor_taxa = (valor_bruto * percentual / Decimal('100.00')).quantize(
         Decimal('0.01'),
@@ -487,6 +491,7 @@ def lancamentos(request):
         if action == 'create_lancamento':
             codigo = _normalize_codigo(request.POST.get('codigo'))
             codigo_forma = _normalize_codigo(request.POST.get('codigo_forma_pagamento'))
+            permuta = _parse_checkbox(request.POST.get('permuta'))
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             dia_post = _parse_day(request, ano, mes, clamp_on_overflow=False)
 
@@ -503,44 +508,61 @@ def lancamentos(request):
                 messages.error(request, f"Código '{codigo}' não encontrado entre os serviços ativos.")
                 return _redirect_lancamentos(ano, mes, dia_post)
 
-            if not codigo_forma:
-                messages.error(request, 'Informe o código da forma de pagamento.')
-                return _redirect_lancamentos(ano, mes, dia_post)
-
-            forma_pagamento = FormaPagamentoSalao.objects.filter(codigo=codigo_forma, ativo=True).first()
-            if not forma_pagamento:
-                messages.error(request, f"Código de pagamento '{codigo_forma}' não encontrado.")
-                return _redirect_lancamentos(ano, mes, dia_post)
-
-            parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
-            if not forma_pagamento.aceita_parcelamento:
-                parcelas = 1
-
-            taxa = TaxaFormaPagamentoSalao.objects.filter(
-                forma_pagamento=forma_pagamento,
-                parcelas=parcelas,
-            ).first()
-            if not taxa:
-                messages.error(request, 'Taxa não cadastrada para essa forma de pagamento e parcela.')
-                return _redirect_lancamentos(ano, mes, dia_post)
-
             if valor_bruto is None or valor_bruto < Decimal('0.00'):
                 messages.error(request, 'Informe um valor bruto válido.')
                 return _redirect_lancamentos(ano, mes, dia_post)
 
-            valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa.percentual)
+            if permuta:
+                forma_pagamento = _forma_pagamento_nao_informado_ativa()
+                if not forma_pagamento:
+                    messages.error(
+                        request,
+                        'Forma de pagamento "0 - Não informado" não está ativa. Ajuste em Pagamentos.',
+                    )
+                    return _redirect_lancamentos(ano, mes, dia_post)
+                parcelas = 1
+                taxa_percentual = Decimal('0.00')
+                valor_taxa = Decimal('0.00')
+                valor_liquido = valor_bruto
+            else:
+                if not codigo_forma:
+                    messages.error(request, 'Informe o código da forma de pagamento.')
+                    return _redirect_lancamentos(ano, mes, dia_post)
+
+                forma_pagamento = FormaPagamentoSalao.objects.filter(codigo=codigo_forma, ativo=True).first()
+                if not forma_pagamento:
+                    messages.error(request, f"Código de pagamento '{codigo_forma}' não encontrado.")
+                    return _redirect_lancamentos(ano, mes, dia_post)
+
+                parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
+                if not forma_pagamento.aceita_parcelamento:
+                    parcelas = 1
+
+                taxa = TaxaFormaPagamentoSalao.objects.filter(
+                    forma_pagamento=forma_pagamento,
+                    parcelas=parcelas,
+                ).first()
+                if not taxa:
+                    messages.error(request, 'Taxa não cadastrada para essa forma de pagamento e parcela.')
+                    return _redirect_lancamentos(ano, mes, dia_post)
+                taxa_percentual = taxa.percentual
+                valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa_percentual)
 
             LancamentoSalao.objects.create(
                 data=date(ano, mes, dia_post),
                 servico=servico,
                 forma_pagamento=forma_pagamento,
                 parcelas=parcelas,
+                permuta=permuta,
                 valor_bruto=valor_bruto,
-                taxa_percentual_aplicada=taxa.percentual,
+                taxa_percentual_aplicada=taxa_percentual,
                 valor_taxa=valor_taxa,
                 valor_cobrado=valor_liquido,
             )
-            messages.success(request, f'Lançamento salvo. Líquido: R$ {valor_liquido}.')
+            if permuta:
+                messages.success(request, f'Permuta salva. Valor integral: R$ {valor_liquido}.')
+            else:
+                messages.success(request, f'Lançamento salvo. Líquido: R$ {valor_liquido}.')
             return _redirect_lancamentos(ano, mes, dia_post)
 
         if action == 'delete_lancamento':
@@ -553,6 +575,7 @@ def lancamentos(request):
         if action == 'update_lancamento':
             lancamento_id = request.POST.get('lancamento_id')
             lancamento = get_object_or_404(LancamentoSalao, id=lancamento_id)
+            permuta = _parse_checkbox(request.POST.get('permuta'))
 
             raw_data = request.POST.get('data')
             try:
@@ -568,37 +591,51 @@ def lancamentos(request):
                 messages.error(request, 'Selecione um serviço ativo válido para edição.')
                 return _redirect_lancamentos(ano, mes, dia)
 
-            forma_pagamento_id = request.POST.get('forma_pagamento_id')
-            forma_pagamento = FormaPagamentoSalao.objects.filter(id=forma_pagamento_id, ativo=True).first()
-            if not forma_pagamento:
-                messages.error(request, 'Selecione uma forma de pagamento ativa válida.')
-                return _redirect_lancamentos(ano, mes, dia)
-
-            parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
-            if not forma_pagamento.aceita_parcelamento:
-                parcelas = 1
-
-            taxa = TaxaFormaPagamentoSalao.objects.filter(
-                forma_pagamento=forma_pagamento,
-                parcelas=parcelas,
-            ).first()
-            if not taxa:
-                messages.error(request, 'Taxa não cadastrada para essa forma de pagamento e parcela.')
-                return _redirect_lancamentos(ano, mes, dia)
-
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             if valor_bruto is None or valor_bruto < Decimal('0.00'):
                 messages.error(request, 'Informe um valor bruto válido para edição.')
                 return _redirect_lancamentos(ano, mes, dia)
 
-            valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa.percentual)
+            if permuta:
+                forma_pagamento = _forma_pagamento_nao_informado_ativa()
+                if not forma_pagamento:
+                    messages.error(
+                        request,
+                        'Forma de pagamento "0 - Não informado" não está ativa. Ajuste em Pagamentos.',
+                    )
+                    return _redirect_lancamentos(ano, mes, dia)
+                parcelas = 1
+                taxa_percentual = Decimal('0.00')
+                valor_taxa = Decimal('0.00')
+                valor_liquido = valor_bruto
+            else:
+                forma_pagamento_id = request.POST.get('forma_pagamento_id')
+                forma_pagamento = FormaPagamentoSalao.objects.filter(id=forma_pagamento_id, ativo=True).first()
+                if not forma_pagamento:
+                    messages.error(request, 'Selecione uma forma de pagamento ativa válida.')
+                    return _redirect_lancamentos(ano, mes, dia)
+
+                parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
+                if not forma_pagamento.aceita_parcelamento:
+                    parcelas = 1
+
+                taxa = TaxaFormaPagamentoSalao.objects.filter(
+                    forma_pagamento=forma_pagamento,
+                    parcelas=parcelas,
+                ).first()
+                if not taxa:
+                    messages.error(request, 'Taxa não cadastrada para essa forma de pagamento e parcela.')
+                    return _redirect_lancamentos(ano, mes, dia)
+                taxa_percentual = taxa.percentual
+                valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa_percentual)
 
             lancamento.data = data_editada
             lancamento.servico = servico
             lancamento.forma_pagamento = forma_pagamento
             lancamento.parcelas = parcelas
+            lancamento.permuta = permuta
             lancamento.valor_bruto = valor_bruto
-            lancamento.taxa_percentual_aplicada = taxa.percentual
+            lancamento.taxa_percentual_aplicada = taxa_percentual
             lancamento.valor_taxa = valor_taxa
             lancamento.valor_cobrado = valor_liquido
             lancamento.save(
@@ -607,6 +644,7 @@ def lancamentos(request):
                     'servico',
                     'forma_pagamento',
                     'parcelas',
+                    'permuta',
                     'valor_bruto',
                     'taxa_percentual_aplicada',
                     'valor_taxa',
@@ -614,7 +652,10 @@ def lancamentos(request):
                     'atualizado_em',
                 ]
             )
-            messages.success(request, 'Lançamento atualizado com sucesso.')
+            if permuta:
+                messages.success(request, 'Permuta atualizada com sucesso.')
+            else:
+                messages.success(request, 'Lançamento atualizado com sucesso.')
             return _redirect_lancamentos(ano, mes, dia)
 
     resumo_dia, resumo_mes, inicio_mes, fim_mes, data_fixa = _resumo_lancamentos_por_competencia(ano, mes, dia)
@@ -1580,6 +1621,8 @@ def dashboard(request):
             return _redirect_dashboard(ano, mes)
 
     lancamentos_mes = LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
+    lancamentos_normais_mes = lancamentos_mes.filter(permuta=False)
+    lancamentos_permuta_mes = lancamentos_mes.filter(permuta=True)
     despesas_mes = DespesaSalao.objects.filter(data__year=ano, data__month=mes)
     vendas_produto_mes = MovimentoEstoqueSalao.objects.filter(
         data__year=ano,
@@ -1588,9 +1631,18 @@ def dashboard(request):
         motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
     )
 
-    faturamento_liquido = lancamentos_mes.aggregate(total=Sum('valor_cobrado'))['total'] or Decimal('0.00')
-    faturamento_bruto_cliente = lancamentos_mes.aggregate(total=Sum('valor_bruto'))['total'] or Decimal('0.00')
-    taxas_total = lancamentos_mes.aggregate(total=Sum('valor_taxa'))['total'] or Decimal('0.00')
+    faturamento_liquido = (
+        lancamentos_normais_mes.aggregate(total=Sum('valor_cobrado'))['total'] or Decimal('0.00')
+    )
+    faturamento_bruto_cliente = (
+        lancamentos_normais_mes.aggregate(total=Sum('valor_bruto'))['total'] or Decimal('0.00')
+    )
+    taxas_total = lancamentos_normais_mes.aggregate(total=Sum('valor_taxa'))['total'] or Decimal('0.00')
+    permuta_total_mes = (
+        lancamentos_permuta_mes.aggregate(total=Sum('valor_bruto'))['total'] or Decimal('0.00')
+    )
+    atendimentos_permuta_total = lancamentos_permuta_mes.count()
+    atendimentos_normais_total = lancamentos_normais_mes.count()
     despesas_total = despesas_mes.aggregate(total=Sum('valor'))['total'] or Decimal('0.00')
     vendas_produto_brutas = (
         vendas_produto_mes.aggregate(total=Sum('valor_bruto_venda'))['total'] or Decimal('0.00')
@@ -1605,8 +1657,13 @@ def dashboard(request):
     lucro_produto = vendas_produto_mes.aggregate(total=Sum('lucro_produto'))['total'] or Decimal('0.00')
     atendimentos_total = lancamentos_mes.count()
     ticket_medio = (
-        (faturamento_liquido / Decimal(atendimentos_total)).quantize(Decimal('0.01'))
-        if atendimentos_total > 0
+        (faturamento_liquido / Decimal(atendimentos_normais_total)).quantize(Decimal('0.01'))
+        if atendimentos_normais_total > 0
+        else Decimal('0.00')
+    )
+    ticket_permuta = (
+        (permuta_total_mes / Decimal(atendimentos_permuta_total)).quantize(Decimal('0.01'))
+        if atendimentos_permuta_total > 0
         else Decimal('0.00')
     )
 
@@ -1637,7 +1694,7 @@ def dashboard(request):
         )
 
     ranking_servicos = (
-        lancamentos_mes.values('servico__codigo', 'servico__nome')
+        lancamentos_normais_mes.values('servico__codigo', 'servico__nome')
         .annotate(quantidade=Count('id'), total=Sum('valor_cobrado'))
         .order_by('-quantidade', '-total', 'servico__codigo')
     )
@@ -1678,14 +1735,22 @@ def dashboard(request):
     chart_lucro = []
     chart_atendimentos = []
     chart_ticket = []
+    chart_permuta = []
 
     for ano_item, mes_item in serie_meses:
         label = f"{mes_item:02d}/{ano_item}"
         lancamentos_item = LancamentoSalao.objects.filter(data__year=ano_item, data__month=mes_item)
+        lancamentos_item_normais = lancamentos_item.filter(permuta=False)
+        lancamentos_item_permuta = lancamentos_item.filter(permuta=True)
         despesas_item = DespesaSalao.objects.filter(data__year=ano_item, data__month=mes_item)
 
-        faturamento_item = lancamentos_item.aggregate(total=Sum('valor_cobrado'))['total'] or Decimal('0.00')
-        taxas_item = lancamentos_item.aggregate(total=Sum('valor_taxa'))['total'] or Decimal('0.00')
+        faturamento_item = (
+            lancamentos_item_normais.aggregate(total=Sum('valor_cobrado'))['total'] or Decimal('0.00')
+        )
+        taxas_item = lancamentos_item_normais.aggregate(total=Sum('valor_taxa'))['total'] or Decimal('0.00')
+        permuta_item = (
+            lancamentos_item_permuta.aggregate(total=Sum('valor_bruto'))['total'] or Decimal('0.00')
+        )
         despesas_item_total = despesas_item.aggregate(total=Sum('valor'))['total'] or Decimal('0.00')
         percentual_item = existing_commissions.get((ano_item, mes_item), Decimal('20.00'))
         comissao_item = (faturamento_item * percentual_item / Decimal('100.00')).quantize(
@@ -1694,9 +1759,10 @@ def dashboard(request):
         )
         lucro_item = faturamento_item - comissao_item - despesas_item_total
         qtd_item = lancamentos_item.count()
+        qtd_item_normais = lancamentos_item_normais.count()
         ticket_item = (
-            (faturamento_item / Decimal(qtd_item)).quantize(Decimal('0.01'))
-            if qtd_item > 0
+            (faturamento_item / Decimal(qtd_item_normais)).quantize(Decimal('0.01'))
+            if qtd_item_normais > 0
             else Decimal('0.00')
         )
 
@@ -1707,6 +1773,7 @@ def dashboard(request):
         chart_lucro.append(float(lucro_item))
         chart_atendimentos.append(qtd_item)
         chart_ticket.append(float(ticket_item))
+        chart_permuta.append(float(permuta_item))
 
     atendimentos_por_dia_qs = (
         lancamentos_mes.values('data__day')
@@ -1741,6 +1808,9 @@ def dashboard(request):
         'valor_faltante_meta': valor_faltante_meta,
         'atendimentos_total': atendimentos_total,
         'ticket_medio': ticket_medio,
+        'ticket_permuta': ticket_permuta,
+        'atendimentos_permuta_total': atendimentos_permuta_total,
+        'permuta_total_mes': permuta_total_mes,
         'vendas_produto_brutas': vendas_produto_brutas,
         'taxas_produto_total': taxas_produto_total,
         'vendas_produto_liquidas': vendas_produto_liquidas,
@@ -1768,6 +1838,10 @@ def dashboard(request):
             'labels': chart_labels,
             'atendimentos': chart_atendimentos,
             'ticket_medio': chart_ticket,
+        },
+        'permuta_chart': {
+            'labels': chart_labels,
+            'permuta': chart_permuta,
         },
         'atendimentos_dia_chart': {
             'labels': dias_labels,
@@ -1797,6 +1871,7 @@ def dashboard_relatorio_lancamentos(request):
     headers = [
         'Data',
         'Servico',
+        'Tipo',
         'Forma de pagamento',
         'Valor',
         'Parcelas',
@@ -1820,14 +1895,18 @@ def dashboard_relatorio_lancamentos(request):
         valor = lancamento.valor_bruto or Decimal('0.00')
         valor_taxa = lancamento.valor_taxa or Decimal('0.00')
         valor_liquido = lancamento.valor_cobrado or Decimal('0.00')
-        valor_20 = (valor_liquido * comissao_percentual / Decimal('100.00')).quantize(
-            Decimal('0.01'),
-            rounding=ROUND_HALF_UP,
-        )
-        valor_pos_20 = (valor_liquido * fator_pos_comissao).quantize(
-            Decimal('0.01'),
-            rounding=ROUND_HALF_UP,
-        )
+        if lancamento.permuta:
+            valor_20 = Decimal('0.00')
+            valor_pos_20 = valor_liquido
+        else:
+            valor_20 = (valor_liquido * comissao_percentual / Decimal('100.00')).quantize(
+                Decimal('0.01'),
+                rounding=ROUND_HALF_UP,
+            )
+            valor_pos_20 = (valor_liquido * fator_pos_comissao).quantize(
+                Decimal('0.01'),
+                rounding=ROUND_HALF_UP,
+            )
         total_valor += valor
         total_taxa += valor_taxa
         total_liquido += valor_liquido
@@ -1837,6 +1916,7 @@ def dashboard_relatorio_lancamentos(request):
             [
                 lancamento.data.strftime('%d/%m/%Y'),
                 lancamento.servico.nome if lancamento.servico else '',
+                'PERMUTA' if lancamento.permuta else 'NORMAL',
                 lancamento.forma_pagamento.nome if lancamento.forma_pagamento else 'Nao informado',
                 float(valor),
                 int(lancamento.parcelas or 1),
@@ -1850,24 +1930,25 @@ def dashboard_relatorio_lancamentos(request):
 
     total_row_idx = sheet.max_row + 2
     sheet.cell(row=total_row_idx, column=1, value='TOTAL')
-    sheet.cell(row=total_row_idx, column=4, value=float(total_valor))
-    sheet.cell(row=total_row_idx, column=7, value=float(total_taxa))
-    sheet.cell(row=total_row_idx, column=8, value=float(total_liquido))
-    sheet.cell(row=total_row_idx, column=9, value=float(total_20))
-    sheet.cell(row=total_row_idx, column=10, value=float(total_pos_20))
-    for col in (1, 4, 7, 8, 9, 10):
+    sheet.cell(row=total_row_idx, column=5, value=float(total_valor))
+    sheet.cell(row=total_row_idx, column=8, value=float(total_taxa))
+    sheet.cell(row=total_row_idx, column=9, value=float(total_liquido))
+    sheet.cell(row=total_row_idx, column=10, value=float(total_20))
+    sheet.cell(row=total_row_idx, column=11, value=float(total_pos_20))
+    for col in (1, 5, 8, 9, 10, 11):
         sheet.cell(row=total_row_idx, column=col).font = Font(bold=True)
 
     sheet.column_dimensions['A'].width = 13
     sheet.column_dimensions['B'].width = 26
-    sheet.column_dimensions['C'].width = 22
-    sheet.column_dimensions['D'].width = 13
-    sheet.column_dimensions['E'].width = 10
+    sheet.column_dimensions['C'].width = 12
+    sheet.column_dimensions['D'].width = 22
+    sheet.column_dimensions['E'].width = 13
     sheet.column_dimensions['F'].width = 10
-    sheet.column_dimensions['G'].width = 13
+    sheet.column_dimensions['G'].width = 10
     sheet.column_dimensions['H'].width = 13
     sheet.column_dimensions['I'].width = 13
-    sheet.column_dimensions['J'].width = 16
+    sheet.column_dimensions['J'].width = 13
+    sheet.column_dimensions['K'].width = 16
 
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -1885,8 +1966,9 @@ def grid_lancamentos(request):
     servico_id = (request.GET.get('servico_id') or '').strip()
     forma_pagamento_id = (request.GET.get('forma_pagamento_id') or '').strip()
 
-    lancamentos_qs = LancamentoSalao.objects.filter(data__year=ano, data__month=mes).select_related(
-        'servico', 'forma_pagamento'
+    lancamentos_qs = (
+        LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
+        .select_related('servico', 'forma_pagamento')
     )
     if servico_id:
         lancamentos_qs = lancamentos_qs.filter(servico_id=servico_id)

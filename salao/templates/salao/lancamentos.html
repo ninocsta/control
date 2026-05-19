@@ -139,6 +139,12 @@
                         <label class="form-label">Parcelas</label>
                         <input class="form-control" id="id_parcelas" name="parcelas" type="number" min="1" max="12" value="1" required>
                     </div>
+                    <div class="col-6 col-md-2">
+                        <div class="form-check mt-4 pt-2">
+                            <input class="form-check-input" type="checkbox" id="id_permuta" name="permuta">
+                            <label class="form-check-label fw-semibold" for="id_permuta">Permuta</label>
+                        </div>
+                    </div>
 
                     <div class="col-12 mt-2">
                         <div class="small text-muted">Fluxo: serviço -> valor -> pagamento -> parcelas -> salvar (<span class="kbd">Enter</span>).</div>
@@ -202,6 +208,12 @@
                         <label class="form-label">Parcelas</label>
                         <input class="form-control" id="id_edit_parcelas" name="parcelas" type="number" min="1" max="12" value="{{ edit_lancamento.parcelas|default:1 }}" required>
                     </div>
+                    <div class="col-md-2">
+                        <div class="form-check mt-4 pt-2">
+                            <input class="form-check-input" type="checkbox" id="id_edit_permuta" name="permuta" {% if edit_lancamento.permuta %}checked{% endif %}>
+                            <label class="form-check-label fw-semibold" for="id_edit_permuta">Permuta</label>
+                        </div>
+                    </div>
                     <div class="col-md-2 d-grid">
                         <button class="btn btn-success" type="submit">Salvar</button>
                     </div>
@@ -219,6 +231,7 @@
                             <tr>
                                 <th class="d-none d-md-table-cell">ID</th>
                                 <th>Serviço</th>
+                                <th>Tipo</th>
                                 <th>Pagamento</th>
                                 <th class="text-end">Bruto</th>
                                 <th class="text-end">Taxa</th>
@@ -348,6 +361,7 @@
     const codigoFormaInput = document.getElementById('id_codigo_forma_pagamento');
     const parcelasInput = document.getElementById('id_parcelas');
     const valorBrutoInput = document.getElementById('id_valor_bruto');
+    const permutaInput = document.getElementById('id_permuta');
 
     const servicoPreview = document.getElementById('servico-preview');
     const pagamentoPreview = document.getElementById('pagamento-preview');
@@ -362,6 +376,7 @@
 
     let lastAutoValue = '';
     let resumoRefreshTimer = null;
+    const isPermutaChecked = () => Boolean(permutaInput && permutaInput.checked);
 
     const formatBRL = (rawValue) => {
         const parsed = Number(String(rawValue).replace(',', '.'));
@@ -403,6 +418,18 @@
     };
 
     const resolveForma = () => {
+        if (isPermutaChecked()) {
+            const formaPermuta = byCodeForma['0'] || null;
+            codigoFormaInput.value = '0';
+            parcelasInput.value = '1';
+            codigoFormaInput.setAttribute('readonly', 'readonly');
+            parcelasInput.setAttribute('readonly', 'readonly');
+            pagamentoPreview.textContent = 'Permuta ativa: forma 0 (Não informado), 1x, sem taxa.';
+            pagamentoPreview.className = 'small text-warning';
+            return formaPermuta;
+        }
+
+        codigoFormaInput.removeAttribute('readonly');
         const code = (codigoFormaInput.value || '').trim().toUpperCase();
         const forma = byCodeForma[code];
 
@@ -445,6 +472,26 @@
     };
 
     const updateLiquidoPreview = () => {
+        if (isPermutaChecked()) {
+            resolveForma();
+            const valorBruto = parseDecimal(valorBrutoInput.value);
+            if (valorBruto === null) {
+                liquidoPreview.textContent = 'Permuta: informe o valor bruto para prévia.';
+                liquidoPreview.className = 'small text-muted';
+                return { forma: byCodeForma['0'] || null, parcelas: 1, taxaPercentual: 0, valorBruto: null };
+            }
+            liquidoPreview.textContent = `Permuta: Taxa R$ 0,00 (0,00%) | Líquido: R$ ${formatBRL(valorBruto)}`;
+            liquidoPreview.className = 'small text-warning fw-semibold';
+            return {
+                forma: byCodeForma['0'] || null,
+                parcelas: 1,
+                taxaPercentual: 0,
+                valorBruto,
+                valorTaxa: 0,
+                valorLiquido: valorBruto,
+            };
+        }
+
         const forma = resolveForma();
         if (!forma) {
             liquidoPreview.textContent = '';
@@ -563,6 +610,9 @@
     codigoFormaInput.addEventListener('blur', updateLiquidoPreview);
     parcelasInput.addEventListener('change', updateLiquidoPreview);
     valorBrutoInput.addEventListener('input', updateLiquidoPreview);
+    if (permutaInput) {
+        permutaInput.addEventListener('change', updateLiquidoPreview);
+    }
 
     codigoInput.addEventListener('keydown', (event) => {
         if (event.key === 'ArrowUp') {
@@ -603,6 +653,12 @@
             return;
         }
 
+        if (isPermutaChecked()) {
+            updateLiquidoPreview();
+            form.submit();
+            return;
+        }
+
         codigoFormaInput.focus();
         codigoFormaInput.select();
     });
@@ -610,6 +666,11 @@
     codigoFormaInput.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter') return;
         event.preventDefault();
+        if (isPermutaChecked()) {
+            updateLiquidoPreview();
+            form.submit();
+            return;
+        }
         const forma = resolveForma();
         if (!forma) {
             codigoFormaInput.focus();
@@ -636,6 +697,11 @@
     parcelasInput.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter') return;
         event.preventDefault();
+        if (isPermutaChecked()) {
+            updateLiquidoPreview();
+            form.submit();
+            return;
+        }
         const forma = resolveForma();
         if (!forma) {
             codigoFormaInput.focus();
@@ -658,8 +724,28 @@
 
     const editFormaSelect = document.getElementById('id_edit_forma_pagamento');
     const editParcelasInput = document.getElementById('id_edit_parcelas');
+    const editPermutaInput = document.getElementById('id_edit_permuta');
     if (editFormaSelect && editParcelasInput) {
+        const findOptionNaoInformado = () => {
+            const target = Array.from(editFormaSelect.options).find((option) =>
+                String(option.textContent || '').trim().startsWith('0 -')
+            );
+            return target || null;
+        };
+
         const updateEditParcelasMode = () => {
+            if (editPermutaInput && editPermutaInput.checked) {
+                const optionNaoInformado = findOptionNaoInformado();
+                if (optionNaoInformado) {
+                    editFormaSelect.value = optionNaoInformado.value;
+                }
+                editParcelasInput.value = '1';
+                editFormaSelect.setAttribute('disabled', 'disabled');
+                editParcelasInput.setAttribute('readonly', 'readonly');
+                return;
+            }
+
+            editFormaSelect.removeAttribute('disabled');
             const selectedOption = editFormaSelect.options[editFormaSelect.selectedIndex];
             const aceita = selectedOption && selectedOption.dataset.aceitaParcelamento === '1';
             if (!aceita) {
@@ -670,6 +756,9 @@
             }
         };
         editFormaSelect.addEventListener('change', updateEditParcelasMode);
+        if (editPermutaInput) {
+            editPermutaInput.addEventListener('change', updateEditParcelasMode);
+        }
         updateEditParcelasMode();
     }
 

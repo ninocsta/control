@@ -94,6 +94,7 @@ class LancamentoSalao(models.Model):
         default=1,
         validators=[MinValueValidator(1), MaxValueValidator(12)],
     )
+    permuta = models.BooleanField(default=False)
     valor_bruto = models.DecimalField(
         max_digits=10,
         decimal_places=2,

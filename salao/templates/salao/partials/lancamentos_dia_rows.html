@@ -3,6 +3,13 @@
     <td class="d-none d-md-table-cell">{{ item.id }}</td>
     <td>{{ item.servico.codigo }} - {{ item.servico.nome }}</td>
     <td>
+        {% if item.permuta %}
+            <span class="badge text-bg-warning">PERMUTA</span>
+        {% else %}
+            <span class="badge text-bg-secondary">Normal</span>
+        {% endif %}
+    </td>
+    <td>
         {% if item.forma_pagamento %}
             {{ item.forma_pagamento.codigo }} - {{ item.forma_pagamento.nome }}{% if item.parcelas > 1 %} ({{ item.parcelas }}x){% endif %}
         {% else %}
@@ -26,5 +33,5 @@
     </td>
 </tr>
 {% empty %}
-<tr><td colspan="7" class="text-center text-muted py-4">Nenhum lançamento no dia.</td></tr>
+<tr><td colspan="8" class="text-center text-muted py-4">Nenhum lançamento no dia.</td></tr>
 {% endfor %}

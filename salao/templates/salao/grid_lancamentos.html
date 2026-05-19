@@ -115,6 +115,7 @@
                     <tr>
                         <th>Data</th>
                         <th>Serviço</th>
+                        <th>Tipo</th>
                         <th>Pagamento</th>
                         <th class="text-end">Bruto</th>
                         <th class="text-end">Taxa</th>
@@ -126,13 +127,20 @@
                     <tr>
                         <td>{{ lancamento.data|date:'d/m/Y' }}</td>
                         <td>{{ lancamento.servico.codigo }} - {{ lancamento.servico.nome }}</td>
+                        <td>
+                            {% if lancamento.permuta %}
+                                <span class="badge text-bg-warning">PERMUTA</span>
+                            {% else %}
+                                <span class="badge text-bg-secondary">Normal</span>
+                            {% endif %}
+                        </td>
                         <td>{{ lancamento.forma_pagamento.nome|default:'Não informado' }} {{ lancamento.parcelas }}x</td>
                         <td class="text-end">R$ {{ lancamento.valor_bruto|floatformat:2 }}</td>
                         <td class="text-end">R$ {{ lancamento.valor_taxa|floatformat:2 }}</td>
                         <td class="text-end">R$ {{ lancamento.valor_cobrado|floatformat:2 }}</td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="6" class="text-center text-muted py-4">Sem lançamentos para os filtros.</td></tr>
+                    <tr><td colspan="7" class="text-center text-muted py-4">Sem lançamentos para os filtros.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
