@@ -14,7 +14,7 @@ class InfinitePayService:
     """
 
     def __init__(self, base_url=None, api_key=None, handle=None, webhook_url=None, redirect_url=None, description=None, timeout=10):
-        self.base_url = (base_url or os.getenv('INFINITEPAY_BASE_URL', 'https://api.infinitepay.io')).rstrip('/')
+        self.base_url = (base_url or os.getenv('INFINITEPAY_BASE_URL', 'https://api.checkout.infinitepay.io')).rstrip('/')
         self.api_key = api_key or os.getenv('INFINITEPAY_API_KEY', '')
         self.handle = handle or os.getenv('INFINITEPAY_HANDLE', '')
         self.webhook_url = webhook_url or os.getenv('INFINITEPAY_WEBHOOK_URL', '')
@@ -79,7 +79,7 @@ class InfinitePayService:
         return payload
 
     def create_checkout(self, invoice):
-        endpoint = f"{self.base_url}/invoices/public/checkout/links"
+        endpoint = f"{self.base_url}/links"
         payload = self._build_payload(invoice)
         response = post_json(endpoint, payload, headers=self._build_headers(), timeout=self.timeout)
 
