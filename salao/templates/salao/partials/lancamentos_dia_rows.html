@@ -5,6 +5,8 @@
     <td>
         {% if item.permuta %}
             <span class="badge text-bg-warning">PERMUTA</span>
+        {% elif item.sem_comissao %}
+            <span class="badge text-bg-info">SEM COMISSÃO</span>
         {% else %}
             <span class="badge text-bg-secondary">Normal</span>
         {% endif %}

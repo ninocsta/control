@@ -145,6 +145,12 @@
                             <label class="form-check-label fw-semibold" for="id_permuta">Permuta</label>
                         </div>
                     </div>
+                    <div class="col-6 col-md-2">
+                        <div class="form-check mt-4 pt-2">
+                            <input class="form-check-input" type="checkbox" id="id_sem_comissao" name="sem_comissao">
+                            <label class="form-check-label fw-semibold" for="id_sem_comissao">Sem comissão</label>
+                        </div>
+                    </div>
 
                     <div class="col-12 mt-2">
                         <div class="small text-muted">Fluxo: serviço -> valor -> pagamento -> parcelas -> salvar (<span class="kbd">Enter</span>).</div>
@@ -212,6 +218,12 @@
                         <div class="form-check mt-4 pt-2">
                             <input class="form-check-input" type="checkbox" id="id_edit_permuta" name="permuta" {% if edit_lancamento.permuta %}checked{% endif %}>
                             <label class="form-check-label fw-semibold" for="id_edit_permuta">Permuta</label>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="form-check mt-4 pt-2">
+                            <input class="form-check-input" type="checkbox" id="id_edit_sem_comissao" name="sem_comissao" {% if edit_lancamento.sem_comissao %}checked{% endif %}>
+                            <label class="form-check-label fw-semibold" for="id_edit_sem_comissao">Sem comissão</label>
                         </div>
                     </div>
                     <div class="col-md-2 d-grid">
@@ -362,6 +374,7 @@
     const parcelasInput = document.getElementById('id_parcelas');
     const valorBrutoInput = document.getElementById('id_valor_bruto');
     const permutaInput = document.getElementById('id_permuta');
+    const semComissaoInput = document.getElementById('id_sem_comissao');
 
     const servicoPreview = document.getElementById('servico-preview');
     const pagamentoPreview = document.getElementById('pagamento-preview');
@@ -611,7 +624,20 @@
     parcelasInput.addEventListener('change', updateLiquidoPreview);
     valorBrutoInput.addEventListener('input', updateLiquidoPreview);
     if (permutaInput) {
-        permutaInput.addEventListener('change', updateLiquidoPreview);
+        permutaInput.addEventListener('change', () => {
+            if (permutaInput.checked && semComissaoInput) {
+                semComissaoInput.checked = false;
+            }
+            updateLiquidoPreview();
+        });
+    }
+    if (semComissaoInput) {
+        semComissaoInput.addEventListener('change', () => {
+            if (semComissaoInput.checked && permutaInput) {
+                permutaInput.checked = false;
+                updateLiquidoPreview();
+            }
+        });
     }
 
     codigoInput.addEventListener('keydown', (event) => {
@@ -725,6 +751,20 @@
     const editFormaSelect = document.getElementById('id_edit_forma_pagamento');
     const editParcelasInput = document.getElementById('id_edit_parcelas');
     const editPermutaInput = document.getElementById('id_edit_permuta');
+    const editSemComissaoInput = document.getElementById('id_edit_sem_comissao');
+    if (editPermutaInput && editSemComissaoInput) {
+        editPermutaInput.addEventListener('change', () => {
+            if (editPermutaInput.checked) {
+                editSemComissaoInput.checked = false;
+            }
+        });
+        editSemComissaoInput.addEventListener('change', () => {
+            if (editSemComissaoInput.checked) {
+                editPermutaInput.checked = false;
+                editPermutaInput.dispatchEvent(new Event('change'));
+            }
+        });
+    }
     if (editFormaSelect && editParcelasInput) {
         const findOptionNaoInformado = () => {
             const target = Array.from(editFormaSelect.options).find((option) =>

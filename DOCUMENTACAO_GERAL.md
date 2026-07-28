@@ -26,7 +26,7 @@ Objetivo principal:
 
 ## Integracao InfinitePay
 - Service: `invoices/services/infinitepay_service.py`.
-- Endpoint: `POST https://api.infinitepay.io/invoices/public/checkout/links`.
+- Endpoint: `POST https://api.checkout.infinitepay.io/links`.
 - Payload:
   - `handle`
   - `items` (quantity=1, price em centavos, description generica)

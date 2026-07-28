@@ -142,6 +142,7 @@ class SalaoViewsTests(TestCase):
         parcelas=1,
         taxa_percentual=Decimal('0.00'),
         permuta=False,
+        sem_comissao=False,
     ):
         if permuta:
             forma = self.forma_nao_informado
@@ -162,6 +163,7 @@ class SalaoViewsTests(TestCase):
             forma_pagamento=forma,
             parcelas=parcelas,
             permuta=permuta,
+            sem_comissao=sem_comissao,
             valor_bruto=valor_bruto,
             taxa_percentual_aplicada=taxa_percentual,
             valor_taxa=valor_taxa,
@@ -1103,6 +1105,31 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.context['ticket_permuta'], Decimal('80.00'))
         self.assertEqual(response.context['atendimentos_permuta_total'], 1)
         self.assertIn('permuta_chart', response.context)
+
+    def test_dashboard_sem_comissao_nao_entra_na_base_da_comissao(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 10),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+            taxa_percentual=Decimal('0.00'),
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 11),
+            valor_bruto=Decimal('50.00'),
+            forma_pagamento=self.forma_dinheiro,
+            taxa_percentual=Decimal('0.00'),
+            sem_comissao=True,
+        )
+
+        response = self.client.get(reverse('salao:dashboard'), {'ano': 2026, 'mes': 3})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['faturamento_bruto'], Decimal('100.00'))
+        self.assertEqual(response.context['sem_comissao_total_mes'], Decimal('50.00'))
+        self.assertEqual(response.context['atendimentos_sem_comissao_total'], 1)
+        self.assertEqual(response.context['ticket_sem_comissao'], Decimal('50.00'))
+        self.assertEqual(response.context['comissao_calculada'], Decimal('20.00'))
+        self.assertEqual(response.context['valor_pos_comissao'], Decimal('80.00'))
 
     def test_dashboard_agrupa_despesas_por_subcategoria(self):
         self._login()

@@ -341,7 +341,33 @@
             </div>
         </div>
     </div>
-    <div class="col-12 col-xl-8">
+    <div class="col-12 col-xl-4">
+        <div class="card card-soft">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Sem Comissão (Mês)</h5>
+                <div class="row g-3">
+                    <div class="col-12">
+                        <div class="kpi-card">
+                            <h6>Total Sem Comissão</h6>
+                            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-sem-comissao-total">R$ {{ sem_comissao_total_mes|floatformat:2 }}</p>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="kpi-card">
+                            <h6>Ticket Sem Comissão</h6>
+                            <p class="kpi-value js-sensitive" data-sensitive-type="money" data-sensitive-key="kpi-ticket-sem-comissao">R$ {{ ticket_sem_comissao|floatformat:2 }}</p>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="small text-muted">
+                            Fora do faturamento e da comissão, só para controle. Qtd: <span class="js-sensitive" data-sensitive-type="count" data-sensitive-key="kpi-sem-comissao-count">{{ atendimentos_sem_comissao_total }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-xl-4">
         <div class="card card-soft chart-card">
             <div class="card-body">
                 <h5 class="card-title">Permuta (6 meses)</h5>
@@ -512,10 +538,13 @@
         despesas: 620.00,
         lucro: 884.00,
         permutaTotal: 240.00,
+        semComissaoTotal: 150.00,
         atendimentos: 25,
         permutas: 3,
+        semComissaoQtd: 2,
         ticketMedio: 75.20,
         ticketPermuta: 80.00,
+        ticketSemComissao: 75.00,
         produto: {
             vendaBruta: 350.00,
             taxa: 21.00,
@@ -584,6 +613,9 @@
         'kpi-atendimentos': `${demoScenario.atendimentos}`,
         'kpi-permuta-count': `${demoScenario.permutas}`,
         'kpi-ticket-permuta': formatMoney(demoScenario.ticketPermuta),
+        'kpi-sem-comissao-total': formatMoney(demoScenario.semComissaoTotal),
+        'kpi-ticket-sem-comissao': formatMoney(demoScenario.ticketSemComissao),
+        'kpi-sem-comissao-count': `${demoScenario.semComissaoQtd}`,
         'produto-venda-bruta': formatMoney(demoScenario.produto.vendaBruta),
         'produto-taxa': formatMoney(demoScenario.produto.taxa),
         'produto-venda-liquida': formatMoney(demoScenario.produto.vendaLiquida),

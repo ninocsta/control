@@ -492,6 +492,7 @@ def lancamentos(request):
             codigo = _normalize_codigo(request.POST.get('codigo'))
             codigo_forma = _normalize_codigo(request.POST.get('codigo_forma_pagamento'))
             permuta = _parse_checkbox(request.POST.get('permuta'))
+            sem_comissao = not permuta and _parse_checkbox(request.POST.get('sem_comissao'))
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             dia_post = _parse_day(request, ano, mes, clamp_on_overflow=False)
 
@@ -554,6 +555,7 @@ def lancamentos(request):
                 forma_pagamento=forma_pagamento,
                 parcelas=parcelas,
                 permuta=permuta,
+                sem_comissao=sem_comissao,
                 valor_bruto=valor_bruto,
                 taxa_percentual_aplicada=taxa_percentual,
                 valor_taxa=valor_taxa,
@@ -561,6 +563,8 @@ def lancamentos(request):
             )
             if permuta:
                 messages.success(request, f'Permuta salva. Valor integral: R$ {valor_liquido}.')
+            elif sem_comissao:
+                messages.success(request, f'Lançamento sem comissão salvo. Líquido: R$ {valor_liquido}.')
             else:
                 messages.success(request, f'Lançamento salvo. Líquido: R$ {valor_liquido}.')
             return _redirect_lancamentos(ano, mes, dia_post)
@@ -576,6 +580,7 @@ def lancamentos(request):
             lancamento_id = request.POST.get('lancamento_id')
             lancamento = get_object_or_404(LancamentoSalao, id=lancamento_id)
             permuta = _parse_checkbox(request.POST.get('permuta'))
+            sem_comissao = not permuta and _parse_checkbox(request.POST.get('sem_comissao'))
 
             raw_data = request.POST.get('data')
             try:
@@ -634,6 +639,7 @@ def lancamentos(request):
             lancamento.forma_pagamento = forma_pagamento
             lancamento.parcelas = parcelas
             lancamento.permuta = permuta
+            lancamento.sem_comissao = sem_comissao
             lancamento.valor_bruto = valor_bruto
             lancamento.taxa_percentual_aplicada = taxa_percentual
             lancamento.valor_taxa = valor_taxa
@@ -645,6 +651,7 @@ def lancamentos(request):
                     'forma_pagamento',
                     'parcelas',
                     'permuta',
+                    'sem_comissao',
                     'valor_bruto',
                     'taxa_percentual_aplicada',
                     'valor_taxa',
@@ -654,6 +661,8 @@ def lancamentos(request):
             )
             if permuta:
                 messages.success(request, 'Permuta atualizada com sucesso.')
+            elif sem_comissao:
+                messages.success(request, 'Lançamento sem comissão atualizado com sucesso.')
             else:
                 messages.success(request, 'Lançamento atualizado com sucesso.')
             return _redirect_lancamentos(ano, mes, dia)
@@ -1621,8 +1630,9 @@ def dashboard(request):
             return _redirect_dashboard(ano, mes)
 
     lancamentos_mes = LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
-    lancamentos_normais_mes = lancamentos_mes.filter(permuta=False)
+    lancamentos_normais_mes = lancamentos_mes.filter(permuta=False, sem_comissao=False)
     lancamentos_permuta_mes = lancamentos_mes.filter(permuta=True)
+    lancamentos_sem_comissao_mes = lancamentos_mes.filter(permuta=False, sem_comissao=True)
     despesas_mes = DespesaSalao.objects.filter(data__year=ano, data__month=mes)
     vendas_produto_mes = MovimentoEstoqueSalao.objects.filter(
         data__year=ano,
@@ -1642,6 +1652,10 @@ def dashboard(request):
         lancamentos_permuta_mes.aggregate(total=Sum('valor_bruto'))['total'] or Decimal('0.00')
     )
     atendimentos_permuta_total = lancamentos_permuta_mes.count()
+    sem_comissao_total_mes = (
+        lancamentos_sem_comissao_mes.aggregate(total=Sum('valor_cobrado'))['total'] or Decimal('0.00')
+    )
+    atendimentos_sem_comissao_total = lancamentos_sem_comissao_mes.count()
     atendimentos_normais_total = lancamentos_normais_mes.count()
     despesas_total = despesas_mes.aggregate(total=Sum('valor'))['total'] or Decimal('0.00')
     vendas_produto_brutas = (
@@ -1664,6 +1678,11 @@ def dashboard(request):
     ticket_permuta = (
         (permuta_total_mes / Decimal(atendimentos_permuta_total)).quantize(Decimal('0.01'))
         if atendimentos_permuta_total > 0
+        else Decimal('0.00')
+    )
+    ticket_sem_comissao = (
+        (sem_comissao_total_mes / Decimal(atendimentos_sem_comissao_total)).quantize(Decimal('0.01'))
+        if atendimentos_sem_comissao_total > 0
         else Decimal('0.00')
     )
 
@@ -1740,7 +1759,7 @@ def dashboard(request):
     for ano_item, mes_item in serie_meses:
         label = f"{mes_item:02d}/{ano_item}"
         lancamentos_item = LancamentoSalao.objects.filter(data__year=ano_item, data__month=mes_item)
-        lancamentos_item_normais = lancamentos_item.filter(permuta=False)
+        lancamentos_item_normais = lancamentos_item.filter(permuta=False, sem_comissao=False)
         lancamentos_item_permuta = lancamentos_item.filter(permuta=True)
         despesas_item = DespesaSalao.objects.filter(data__year=ano_item, data__month=mes_item)
 
@@ -1811,6 +1830,9 @@ def dashboard(request):
         'ticket_permuta': ticket_permuta,
         'atendimentos_permuta_total': atendimentos_permuta_total,
         'permuta_total_mes': permuta_total_mes,
+        'ticket_sem_comissao': ticket_sem_comissao,
+        'atendimentos_sem_comissao_total': atendimentos_sem_comissao_total,
+        'sem_comissao_total_mes': sem_comissao_total_mes,
         'vendas_produto_brutas': vendas_produto_brutas,
         'taxas_produto_total': taxas_produto_total,
         'vendas_produto_liquidas': vendas_produto_liquidas,
@@ -1895,7 +1917,7 @@ def dashboard_relatorio_lancamentos(request):
         valor = lancamento.valor_bruto or Decimal('0.00')
         valor_taxa = lancamento.valor_taxa or Decimal('0.00')
         valor_liquido = lancamento.valor_cobrado or Decimal('0.00')
-        if lancamento.permuta:
+        if lancamento.permuta or lancamento.sem_comissao:
             valor_20 = Decimal('0.00')
             valor_pos_20 = valor_liquido
         else:
@@ -1916,7 +1938,7 @@ def dashboard_relatorio_lancamentos(request):
             [
                 lancamento.data.strftime('%d/%m/%Y'),
                 lancamento.servico.nome if lancamento.servico else '',
-                'PERMUTA' if lancamento.permuta else 'NORMAL',
+                'PERMUTA' if lancamento.permuta else ('SEM COMISSAO' if lancamento.sem_comissao else 'NORMAL'),
                 lancamento.forma_pagamento.nome if lancamento.forma_pagamento else 'Nao informado',
                 float(valor),
                 int(lancamento.parcelas or 1),
