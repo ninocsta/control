@@ -1,7 +1,11 @@
 import calendar
+import csv
+import io
 import re
+import unicodedata
 import uuid
-from datetime import date
+from collections import defaultdict
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from openpyxl import Workbook
@@ -17,6 +21,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils import timezone
 
 from .models import (
     CompraEstoqueItemSalao,
@@ -31,6 +36,7 @@ from .models import (
     ServicoSalao,
     SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
+    TransacaoIgnoradaSalao,
 )
 
 
@@ -151,6 +157,13 @@ def _redirect_despesas(ano, mes):
 
 def _redirect_dashboard(ano, mes):
     return redirect(f"{reverse('salao:dashboard')}?ano={ano}&mes={mes}")
+
+
+def _redirect_conferencia(ano, mes, dia=None):
+    url = f"{reverse('salao:conferencia')}?ano={ano}&mes={mes}"
+    if dia:
+        url += f'&dia={dia}'
+    return redirect(url)
 
 
 def _redirect_grid_lancamentos(ano, mes):
@@ -414,6 +427,164 @@ def _reverter_compra_estoque(compra):
     compra.delete()
     for produto_id in produto_ids:
         _rebuild_produto_from_movimentos(produto_id)
+
+
+# ---------------------------------------------------------------------------
+# Conferência bancária (CSV da adquirente x lançamentos)
+# ---------------------------------------------------------------------------
+
+CONFERENCIA_SESSION_KEY = 'conferencia_extrato'
+
+_CSV_COLUNAS = {
+    'data': 'Data e hora',
+    'meio': 'Meio - Meio',
+    'bandeira': 'Meio - Bandeira',
+    'parcelas': 'Meio - Parcelas',
+    'origem': 'Tipo - Origem',
+    'identificador': 'Identificador',
+    'status': 'Status',
+    'bruto': 'Valor (R$)',
+    'liquido': 'Líquido (R$)',
+    'taxa_percentual': 'Taxa Aplicada - Aplicada(%)',
+    'nome': 'Origem - Nome',
+}
+
+
+def _normalizar_texto(value):
+    texto = unicodedata.normalize('NFKD', (value or '').strip().lower())
+    return ''.join(ch for ch in texto if not unicodedata.combining(ch))
+
+
+def _parse_valor_extrato(raw_value):
+    """Aceita tanto '8.000,00' (pt-BR) quanto '3.14' (ponto decimal)."""
+    texto = (raw_value or '').strip().replace("'", '').replace('R$', '')
+    texto = texto.replace('\xa0', ' ').replace(' ', '').replace('-', '')
+    if not texto:
+        return Decimal('0.00')
+    if ',' in texto:
+        texto = texto.replace('.', '').replace(',', '.')
+    try:
+        return Decimal(texto).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return Decimal('0.00')
+
+
+def _parse_parcelas_extrato(raw_value):
+    somente_digitos = re.sub(r'\D', '', raw_value or '')
+    return int(somente_digitos) if somente_digitos else 1
+
+
+def _parse_extrato_csv(arquivo, ano, mes):
+    """Lê o CSV da adquirente e devolve (transacoes, ignoradas_fora_da_competencia)."""
+    conteudo = arquivo.read()
+    if isinstance(conteudo, bytes):
+        conteudo = conteudo.decode('utf-8-sig', errors='replace')
+
+    amostra = conteudo[:4096]
+    try:
+        dialeto = csv.Sniffer().sniff(amostra, delimiters=',;')
+        delimitador = dialeto.delimiter
+    except csv.Error:
+        delimitador = ','
+
+    leitor = csv.DictReader(io.StringIO(conteudo), delimiter=delimitador)
+    if not leitor.fieldnames or _CSV_COLUNAS['data'] not in leitor.fieldnames:
+        raise ValueError(
+            'CSV fora do formato esperado. A primeira linha precisa ter as colunas do '
+            'relatório da InfinitePay (Data e hora, Valor (R$), Status...).'
+        )
+
+    transacoes = []
+    fora_competencia = 0
+    for linha in leitor:
+        bruto_data = (linha.get(_CSV_COLUNAS['data']) or '').strip()
+        if not bruto_data:
+            continue
+        try:
+            data_hora = datetime.strptime(bruto_data[:16], '%d/%m/%Y %H:%M')
+        except ValueError:
+            try:
+                data_hora = datetime.strptime(bruto_data[:10], '%d/%m/%Y')
+            except ValueError:
+                continue
+
+        if data_hora.year != ano or data_hora.month != mes:
+            fora_competencia += 1
+            continue
+
+        transacoes.append({
+            'dia': data_hora.day,
+            'hora': data_hora.strftime('%H:%M'),
+            'meio': (linha.get(_CSV_COLUNAS['meio']) or '').strip(),
+            'bandeira': (linha.get(_CSV_COLUNAS['bandeira']) or '').strip(),
+            'parcelas': _parse_parcelas_extrato(linha.get(_CSV_COLUNAS['parcelas'])),
+            'origem': (linha.get(_CSV_COLUNAS['origem']) or '').strip(),
+            'identificador': (linha.get(_CSV_COLUNAS['identificador']) or '').strip(),
+            'status': (linha.get(_CSV_COLUNAS['status']) or '').strip(),
+            'bruto': str(_parse_valor_extrato(linha.get(_CSV_COLUNAS['bruto']))),
+            'liquido': str(_parse_valor_extrato(linha.get(_CSV_COLUNAS['liquido']))),
+            'taxa_percentual': str(_parse_valor_extrato(linha.get(_CSV_COLUNAS['taxa_percentual']))),
+            'nome': (linha.get(_CSV_COLUNAS['nome']) or '').strip(),
+        })
+
+    return transacoes, fora_competencia
+
+
+def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
+    """Casa lançamentos do sistema com transações do extrato, dentro de um dia.
+
+    O valor lançado no sistema ora é o que o cliente pagou (= bruto do extrato),
+    ora é o valor do serviço com a taxa embutida no cartão (= líquido do
+    extrato). Por isso cada passada testa os dois lados. A ordem vai do critério
+    mais forte para o mais fraco, e nada casa duas vezes:
+
+        1. valor exato + mesmo meio de pagamento
+        2. valor exato, qualquer meio
+        3. dentro da tolerância, escolhendo a menor diferença
+
+    Sobras dos dois lados voltam explícitas para conferência manual.
+    """
+    disponiveis = list(transacoes)
+    pendentes = list(lancamentos)
+    pares = []
+
+    def candidatos(lancamento, exigir_meio, limite):
+        meio_lancamento = _normalizar_texto(
+            lancamento.forma_pagamento.nome if lancamento.forma_pagamento else ''
+        )
+        for transacao in disponiveis:
+            if exigir_meio and _normalizar_texto(transacao['meio']) != meio_lancamento:
+                continue
+            for criterio in ('bruto', 'liquido'):
+                diferenca = lancamento.valor_bruto - Decimal(transacao[criterio])
+                if abs(diferenca) <= limite:
+                    yield abs(diferenca), transacao, criterio, diferenca
+
+    zero = Decimal('0.00')
+    for exigir_meio, limite in ((True, zero), (False, zero), (False, tolerancia)):
+        for lancamento in list(pendentes):
+            melhor = min(
+                candidatos(lancamento, exigir_meio, limite),
+                key=lambda item: item[0],
+                default=None,
+            )
+            if melhor is None:
+                continue
+            _, transacao, criterio, diferenca = melhor
+            disponiveis.remove(transacao)
+            pendentes.remove(lancamento)
+            pares.append({
+                'lancamento': lancamento,
+                'transacao': transacao,
+                'criterio': criterio,
+                'diferenca_valor': diferenca.quantize(Decimal('0.01')),
+                'diferenca_taxa': (
+                    Decimal(transacao['taxa_percentual']) - lancamento.taxa_percentual_aplicada
+                ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+            })
+
+    pares.sort(key=lambda par: par['lancamento'].id)
+    return pares, pendentes, disponiveis
 
 
 def _resumo_lancamentos_por_competencia(ano, mes, dia):
@@ -1983,6 +2154,203 @@ def dashboard_relatorio_lancamentos(request):
 
 
 @_salao_superuser_required
+def conferencia(request):
+    ano, mes = _parse_competencia(request)
+    sessao_key = f'{CONFERENCIA_SESSION_KEY}_{ano}_{mes}'
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'toggle_conferido':
+            lancamento = get_object_or_404(LancamentoSalao, pk=request.POST.get('lancamento_id'))
+            lancamento.conferido = _parse_checkbox(request.POST.get('conferido'))
+            lancamento.conferido_em = timezone.now() if lancamento.conferido else None
+            lancamento.save(update_fields=['conferido', 'conferido_em', 'atualizado_em'])
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'ok': True, 'conferido': lancamento.conferido})
+            return _redirect_conferencia(ano, mes, request.POST.get('dia'))
+
+        if action in {'conferir_dia', 'desconferir_dia'}:
+            dia = _parse_day(request, ano, mes)
+            if dia is None:
+                messages.error(request, 'Dia inválido.')
+                return _redirect_conferencia(ano, mes, None)
+            marcar = action == 'conferir_dia'
+            atualizados = LancamentoSalao.objects.filter(
+                data=date(ano, mes, dia),
+                conferido=not marcar,
+            ).update(
+                conferido=marcar,
+                conferido_em=timezone.now() if marcar else None,
+            )
+            verbo = 'conferidos' if marcar else 'desmarcados'
+            messages.success(request, f'{atualizados} lançamento(s) {verbo} no dia {dia:02d}/{mes:02d}.')
+            return _redirect_conferencia(ano, mes, dia)
+
+        if action == 'importar_extrato':
+            arquivo = request.FILES.get('extrato')
+            if not arquivo:
+                messages.error(request, 'Selecione o arquivo CSV do relatório da adquirente.')
+                return _redirect_conferencia(ano, mes, None)
+            try:
+                transacoes, fora_competencia = _parse_extrato_csv(arquivo, ano, mes)
+            except ValueError as erro:
+                messages.error(request, str(erro))
+                return _redirect_conferencia(ano, mes, None)
+
+            request.session[sessao_key] = transacoes
+            aviso = f'Extrato importado: {len(transacoes)} transação(ões) de {mes:02d}/{ano}.'
+            if fora_competencia:
+                aviso += f' {fora_competencia} linha(s) de outra competência foram ignoradas.'
+            messages.success(request, aviso)
+            return _redirect_conferencia(ano, mes, None)
+
+        if action == 'ignorar_transacao':
+            identificador = (request.POST.get('identificador') or '').strip()
+            if identificador:
+                TransacaoIgnoradaSalao.objects.get_or_create(
+                    identificador=identificador,
+                    defaults={'referencia': (request.POST.get('referencia') or '')[:200]},
+                )
+                messages.success(request, 'Transação marcada como fora do salão.')
+            return _redirect_conferencia(ano, mes, request.POST.get('dia'))
+
+        if action == 'reativar_transacao':
+            TransacaoIgnoradaSalao.objects.filter(
+                identificador=(request.POST.get('identificador') or '').strip()
+            ).delete()
+            messages.success(request, 'Transação voltou para a conferência.')
+            return _redirect_conferencia(ano, mes, request.POST.get('dia'))
+
+        if action == 'limpar_extrato':
+            request.session.pop(sessao_key, None)
+            messages.success(request, 'Extrato removido da conferência.')
+            return _redirect_conferencia(ano, mes, None)
+
+    dia_filtro = None
+    raw_dia = (request.GET.get('dia') or '').strip()
+    if raw_dia:
+        dia_filtro = _parse_day(request, ano, mes)
+
+    somente_pendentes = request.GET.get('pendentes') == '1'
+    tolerancia = _parse_decimal(request.GET.get('tolerancia'))
+    if tolerancia is None or tolerancia < Decimal('0.00'):
+        tolerancia = Decimal('1.00')
+
+    transacoes_sessao = request.session.get(sessao_key) or []
+    identificadores_ignorados = set(
+        TransacaoIgnoradaSalao.objects.values_list('identificador', flat=True)
+    )
+
+    transacoes_aprovadas = []
+    transacoes_recusadas = []
+    transacoes_ignoradas = []
+    for transacao in transacoes_sessao:
+        if transacao['identificador'] in identificadores_ignorados:
+            transacoes_ignoradas.append(transacao)
+        elif _normalizar_texto(transacao['status']) == 'aprovada':
+            transacoes_aprovadas.append(transacao)
+        else:
+            transacoes_recusadas.append(transacao)
+
+    lancamentos_mes = list(
+        LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
+        .select_related('servico', 'forma_pagamento')
+        .order_by('data', 'id')
+    )
+
+    transacoes_por_dia = defaultdict(list)
+    for transacao in transacoes_aprovadas:
+        transacoes_por_dia[transacao['dia']].append(transacao)
+
+    lancamentos_por_dia = defaultdict(list)
+    for lancamento in lancamentos_mes:
+        lancamentos_por_dia[lancamento.data.day].append(lancamento)
+
+    dias = sorted(set(lancamentos_por_dia) | set(transacoes_por_dia))
+    if dia_filtro is not None:
+        dias = [d for d in dias if d == dia_filtro]
+
+    dias_context = []
+    total_sistema = Decimal('0.00')
+    total_extrato = Decimal('0.00')
+    total_conferidos = 0
+    total_lancamentos = 0
+    total_sem_par_sistema = 0
+    total_sem_par_extrato = 0
+
+    for dia in dias:
+        do_dia = lancamentos_por_dia.get(dia, [])
+        # Permuta não passa pelo banco: fica de fora do pareamento, mas continua visível.
+        conciliaveis = [l for l in do_dia if not l.permuta]
+        permutas = [l for l in do_dia if l.permuta]
+        pares, sem_par_sistema, sem_par_extrato = _parear_dia(
+            conciliaveis,
+            transacoes_por_dia.get(dia, []),
+            tolerancia=tolerancia,
+        )
+
+        soma_sistema = sum((l.valor_bruto for l in conciliaveis), Decimal('0.00'))
+        soma_extrato = sum(
+            (Decimal(t['bruto']) for t in transacoes_por_dia.get(dia, [])),
+            Decimal('0.00'),
+        )
+        conferidos_dia = sum(1 for l in do_dia if l.conferido)
+
+        total_sistema += soma_sistema
+        total_extrato += soma_extrato
+        total_conferidos += conferidos_dia
+        total_lancamentos += len(do_dia)
+        total_sem_par_sistema += len(sem_par_sistema)
+        total_sem_par_extrato += len(sem_par_extrato)
+
+        if somente_pendentes and conferidos_dia == len(do_dia) and not sem_par_extrato:
+            continue
+
+        dias_context.append({
+            'dia': dia,
+            'data': date(ano, mes, dia),
+            'pares': pares,
+            'sem_par_sistema': sem_par_sistema,
+            'sem_par_extrato': sem_par_extrato,
+            'permutas': permutas,
+            'quantidade': len(do_dia),
+            'conferidos': conferidos_dia,
+            'pendentes': len(do_dia) - conferidos_dia,
+            'total_sistema': soma_sistema,
+            'total_extrato': soma_extrato,
+            'diferenca': (soma_sistema - soma_extrato).quantize(Decimal('0.01')),
+            'tudo_conferido': len(do_dia) > 0 and conferidos_dia == len(do_dia),
+        })
+
+    context = {
+        'active_tab': 'conferencia',
+        'ano': ano,
+        'mes': mes,
+        'month_options': MONTH_OPTIONS,
+        'year_options': _build_year_options(),
+        'dia_filtro': dia_filtro,
+        'somente_pendentes': somente_pendentes,
+        'dias': dias_context,
+        'tolerancia': tolerancia,
+        'tem_extrato': bool(transacoes_sessao),
+        'transacoes_recusadas': transacoes_recusadas,
+        'transacoes_ignoradas': transacoes_ignoradas,
+        'resumo': {
+            'total_sistema': total_sistema,
+            'total_extrato': total_extrato,
+            'diferenca': (total_sistema - total_extrato).quantize(Decimal('0.01')),
+            'lancamentos': total_lancamentos,
+            'conferidos': total_conferidos,
+            'pendentes': total_lancamentos - total_conferidos,
+            'sem_par_sistema': total_sem_par_sistema,
+            'sem_par_extrato': total_sem_par_extrato,
+        },
+    }
+    return render(request, 'salao/conferencia.html', context)
+
+
+@_salao_superuser_required
 def grid_lancamentos(request):
     ano, mes = _parse_competencia(request)
     servico_id = (request.GET.get('servico_id') or '').strip()
@@ -2000,6 +2368,12 @@ def grid_lancamentos(request):
     resumo_totais = lancamentos_qs.aggregate(
         bruto=Sum('valor_bruto'),
         taxa=Sum('valor_taxa'),
+        liquido=Sum('valor_cobrado'),
+        quantidade=Count('id'),
+    )
+    # Mesma base do dashboard (exclui permuta e sem comissão), para os totais baterem entre as telas.
+    resumo_normais = lancamentos_qs.filter(permuta=False, sem_comissao=False).aggregate(
+        bruto=Sum('valor_bruto'),
         liquido=Sum('valor_cobrado'),
         quantidade=Count('id'),
     )
@@ -2026,6 +2400,9 @@ def grid_lancamentos(request):
             'taxa': resumo_totais['taxa'] or Decimal('0.00'),
             'liquido': resumo_totais['liquido'] or Decimal('0.00'),
             'quantidade': resumo_totais['quantidade'] or 0,
+            'bruto_normais': resumo_normais['bruto'] or Decimal('0.00'),
+            'liquido_normais': resumo_normais['liquido'] or Decimal('0.00'),
+            'quantidade_normais': resumo_normais['quantidade'] or 0,
         },
     }
     return render(request, 'salao/grid_lancamentos.html', context)

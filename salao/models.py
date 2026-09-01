@@ -119,6 +119,8 @@ class LancamentoSalao(models.Model):
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.00'))],
     )
+    conferido = models.BooleanField(default=False, db_index=True)
+    conferido_em = models.DateTimeField(null=True, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
@@ -492,3 +494,23 @@ class ComissaoMensalSalao(models.Model):
 
     def __str__(self):
         return f"{self.mes:02d}/{self.ano} - {self.percentual}%"
+
+
+class TransacaoIgnoradaSalao(models.Model):
+    """Transações do extrato da adquirente que não são do salão.
+
+    Guarda só o identificador da transação (NSU/E2E) para que uma reimportação
+    do CSV continue ignorando o mesmo recebimento.
+    """
+
+    identificador = models.CharField(max_length=120, unique=True)
+    referencia = models.CharField(max_length=200, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Transação Ignorada do Salão'
+        verbose_name_plural = 'Transações Ignoradas do Salão'
+        ordering = ['-criado_em']
+
+    def __str__(self):
+        return self.referencia or self.identificador

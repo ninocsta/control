@@ -16,6 +16,7 @@ urlpatterns = [
         views.dashboard_relatorio_lancamentos,
         name='dashboard_relatorio_lancamentos',
     ),
+    path('conferencia/', views.conferencia, name='conferencia'),
     path('grid/lancamentos/', views.grid_lancamentos, name='grid_lancamentos'),
     path('grid/despesas/', views.grid_despesas, name='grid_despesas'),
     path('servicos/', views.servicos, name='servicos'),

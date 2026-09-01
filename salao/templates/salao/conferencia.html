@@ -1,0 +1,383 @@
+{% extends 'salao/base.html' %}
+
+{% block title %}Conferência Bancária | Salão{% endblock %}
+
+{% block extra_head %}
+<style>
+    .conf-dia { border-left: 4px solid #dee2e6; }
+    .conf-dia.is-ok { border-left-color: #198754; }
+    .conf-dia.is-alerta { border-left-color: #dc3545; }
+    .conf-dia-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .5rem 1rem;
+        cursor: pointer;
+        list-style: none;
+    }
+    .conf-dia-head::-webkit-details-marker { display: none; }
+    .conf-dia-data { font-weight: 700; font-size: 1.05rem; min-width: 6.5rem; }
+    .conf-metric { font-size: .8rem; color: #6c757d; white-space: nowrap; }
+    .conf-metric strong { color: #212529; font-size: .95rem; display: block; }
+    .conf-linha {
+        display: grid;
+        grid-template-columns: 2.2rem 1fr 1fr;
+        gap: .5rem;
+        align-items: center;
+        padding: .45rem .25rem;
+        border-top: 1px solid #f1f1f4;
+    }
+    .conf-linha:hover { background: #fafafc; }
+    .conf-linha.is-conferido { background: #f2fbf5; }
+    .conf-lado { font-size: .85rem; line-height: 1.35; }
+    .conf-lado .conf-valor { font-weight: 700; }
+    .conf-lado.vazio { color: #b02a37; font-style: italic; }
+    .conf-sub { font-size: .75rem; color: #6c757d; }
+    .conf-check { width: 1.35rem; height: 1.35rem; cursor: pointer; }
+    .conf-cabecalho-lados {
+        display: grid;
+        grid-template-columns: 2.2rem 1fr 1fr;
+        gap: .5rem;
+        font-size: .72rem;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: #6c757d;
+        padding: .25rem;
+    }
+    @media (max-width: 767px) {
+        .conf-linha, .conf-cabecalho-lados { grid-template-columns: 2.2rem 1fr; }
+        .conf-linha .conf-lado-extrato { grid-column: 2; padding-left: .5rem; border-left: 2px solid #e9ecef; }
+        .conf-cabecalho-lados .conf-lado-extrato { display: none; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card card-soft mb-3">
+    <div class="card-body">
+        <h5 class="card-title mb-3">Conferência Bancária</h5>
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-6 col-md-2">
+                <label class="form-label">Mês</label>
+                <select class="form-select" name="mes">
+                    {% for value, label in month_options %}
+                        <option value="{{ value }}" {% if mes == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">Ano</label>
+                <select class="form-select" name="ano">
+                    {% for year in year_options %}
+                        <option value="{{ year }}" {% if ano == year %}selected{% endif %}>{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">Dia</label>
+                <input type="number" min="1" max="31" class="form-control" name="dia"
+                       value="{{ dia_filtro|default_if_none:'' }}" placeholder="todos">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label">Tolerância R$</label>
+                <input type="text" class="form-control" name="tolerancia" value="{{ tolerancia|floatformat:2 }}">
+            </div>
+            <div class="col-6 col-md-2">
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" name="pendentes" value="1"
+                           id="filtro-pendentes" {% if somente_pendentes %}checked{% endif %}>
+                    <label class="form-check-label" for="filtro-pendentes">Só dias pendentes</label>
+                </div>
+            </div>
+            <div class="col-12 col-md-2 d-flex gap-2">
+                <button class="btn btn-primary flex-fill" type="submit">Filtrar</button>
+                <a class="btn btn-outline-secondary" href="{% url 'salao:conferencia' %}?ano={{ ano }}&mes={{ mes }}">Limpar</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card card-soft mb-3">
+    <div class="card-body">
+        <form method="post" enctype="multipart/form-data" class="row g-2 align-items-end">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="importar_extrato">
+            <input type="hidden" name="ano" value="{{ ano }}">
+            <input type="hidden" name="mes" value="{{ mes }}">
+            <div class="col-12 col-md-6">
+                <label class="form-label">Extrato da adquirente (CSV da InfinitePay)</label>
+                <input type="file" class="form-control" name="extrato" accept=".csv,text/csv" required>
+                <div class="form-text">Só as transações de {{ mes|stringformat:'02d' }}/{{ ano }} são usadas. O arquivo não é gravado, fica só nesta sessão.</div>
+            </div>
+            <div class="col-12 col-md-3">
+                <button class="btn btn-primary w-100" type="submit">Importar extrato</button>
+            </div>
+            {% if tem_extrato %}
+            <div class="col-12 col-md-3">
+                <button class="btn btn-outline-secondary w-100" type="submit" form="form-limpar-extrato">Remover extrato</button>
+            </div>
+            {% endif %}
+        </form>
+        {% if tem_extrato %}
+        <form method="post" id="form-limpar-extrato" class="d-none">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="limpar_extrato">
+            <input type="hidden" name="ano" value="{{ ano }}">
+            <input type="hidden" name="mes" value="{{ mes }}">
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted">Total sistema (bruto)</div>
+            <div class="fw-bold js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-sistema">R$ {{ resumo.total_sistema|floatformat:2 }}</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted">Total extrato</div>
+            <div class="fw-bold js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-extrato">R$ {{ resumo.total_extrato|floatformat:2 }}</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted">Diferença</div>
+            <div class="fw-bold js-sensitive {% if resumo.diferenca %}text-danger{% else %}text-success{% endif %}"
+                 data-sensitive-type="money" data-sensitive-key="conf-diferenca">R$ {{ resumo.diferenca|floatformat:2 }}</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card card-soft"><div class="card-body py-3">
+            <div class="small text-muted">Conferidos</div>
+            <div class="fw-bold">{{ resumo.conferidos }} / {{ resumo.lancamentos }}</div>
+            <div class="small text-muted">{{ resumo.pendentes }} pendente(s)</div>
+        </div></div>
+    </div>
+</div>
+
+{% if tem_extrato and resumo.sem_par_extrato %}
+<div class="alert alert-warning py-2">
+    <strong>{{ resumo.sem_par_extrato }}</strong> transação(ões) do extrato sem lançamento correspondente —
+    possível venda não registrada no sistema.
+</div>
+{% endif %}
+{% if transacoes_recusadas %}
+<div class="alert alert-secondary py-2 small">
+    {{ transacoes_recusadas|length }} transação(ões) canceladas/negadas no extrato foram ignoradas na conferência.
+</div>
+{% endif %}
+
+{% if transacoes_ignoradas %}
+<details class="card card-soft mb-3">
+    <summary class="card-body py-2 small">
+        {{ transacoes_ignoradas|length }} transação(ões) fora do salão neste extrato (recebimentos por fora) — clique para rever
+    </summary>
+    <div class="card-body pt-0">
+        {% for transacao in transacoes_ignoradas %}
+        <div class="d-flex align-items-center gap-2 py-1 border-top small">
+            <span class="fw-bold js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-ig-{{ forloop.counter }}">R$ {{ transacao.bruto }}</span>
+            <span class="text-muted">{{ transacao.dia|stringformat:'02d' }}/{{ mes|stringformat:'02d' }} · {{ transacao.meio }} · {{ transacao.origem }}{% if transacao.nome %} · {{ transacao.nome }}{% endif %}</span>
+            <form method="post" class="ms-auto">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="reativar_transacao">
+                <input type="hidden" name="ano" value="{{ ano }}">
+                <input type="hidden" name="mes" value="{{ mes }}">
+                <input type="hidden" name="identificador" value="{{ transacao.identificador }}">
+                <button class="btn btn-sm btn-outline-secondary py-0" type="submit">Voltar pra conferência</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+</details>
+{% endif %}
+
+{% for item in dias %}
+<details class="card card-soft mb-2 conf-dia {% if item.tudo_conferido %}is-ok{% elif item.diferenca or item.sem_par_extrato %}is-alerta{% endif %}"
+         {% if dia_filtro or item.pendentes %}open{% endif %}>
+    <summary class="card-body py-3 conf-dia-head">
+        <span class="conf-dia-data">{{ item.data|date:'d/m' }} <span class="text-muted fw-normal">{{ item.data|date:'D' }}</span></span>
+        <span class="conf-metric">Sistema <strong class="js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-dia-sis-{{ item.dia }}">R$ {{ item.total_sistema|floatformat:2 }}</strong></span>
+        <span class="conf-metric">Extrato <strong class="js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-dia-ext-{{ item.dia }}">R$ {{ item.total_extrato|floatformat:2 }}</strong></span>
+        <span class="conf-metric">Diferença <strong class="{% if item.diferenca %}text-danger{% else %}text-success{% endif %} js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-dia-dif-{{ item.dia }}">R$ {{ item.diferenca|floatformat:2 }}</strong></span>
+        <span class="ms-auto d-flex align-items-center gap-2">
+            {% if item.tudo_conferido %}
+                <span class="badge text-bg-success">Conferido</span>
+            {% else %}
+                <span class="badge text-bg-secondary">{{ item.conferidos }}/{{ item.quantidade }}</span>
+            {% endif %}
+        </span>
+    </summary>
+    <div class="card-body pt-0">
+        <div class="d-flex gap-2 mb-2">
+            <form method="post" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="conferir_dia">
+                <input type="hidden" name="ano" value="{{ ano }}">
+                <input type="hidden" name="mes" value="{{ mes }}">
+                <input type="hidden" name="dia" value="{{ item.dia }}">
+                <button class="btn btn-sm btn-outline-success" type="submit">Conferir dia todo</button>
+            </form>
+            <form method="post" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="desconferir_dia">
+                <input type="hidden" name="ano" value="{{ ano }}">
+                <input type="hidden" name="mes" value="{{ mes }}">
+                <input type="hidden" name="dia" value="{{ item.dia }}">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Desmarcar dia</button>
+            </form>
+        </div>
+
+        <div class="conf-cabecalho-lados">
+            <span>OK</span>
+            <span>Lançamento no sistema</span>
+            <span class="conf-lado-extrato">Transação no extrato</span>
+        </div>
+
+        {% for par in item.pares %}
+        <div class="conf-linha {% if par.lancamento.conferido %}is-conferido{% endif %}" data-linha>
+            <div>
+                <input class="form-check-input conf-check js-conferir" type="checkbox"
+                       data-lancamento="{{ par.lancamento.id }}"
+                       {% if par.lancamento.conferido %}checked{% endif %}>
+            </div>
+            <div class="conf-lado">
+                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-l-{{ par.lancamento.id }}">R$ {{ par.lancamento.valor_bruto|floatformat:2 }}</span>
+                {% if par.lancamento.sem_comissao %}<span class="badge text-bg-info">SEM COMISSÃO</span>{% endif %}
+                <div class="conf-sub">
+                    {{ par.lancamento.servico.codigo }} - {{ par.lancamento.servico.nome }} ·
+                    {{ par.lancamento.forma_pagamento.nome|default:'Não informado' }} {{ par.lancamento.parcelas }}x ·
+                    taxa {{ par.lancamento.taxa_percentual_aplicada|floatformat:2 }}%
+                </div>
+            </div>
+            <div class="conf-lado conf-lado-extrato">
+                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-t-{{ par.lancamento.id }}">R$ {{ par.transacao.bruto }}</span>
+                <div class="conf-sub">
+                    {{ par.transacao.hora }} · {{ par.transacao.meio }}{% if par.transacao.bandeira and par.transacao.bandeira != par.transacao.meio %} {{ par.transacao.bandeira }}{% endif %} ·
+                    líquido R$ {{ par.transacao.liquido }} · taxa {{ par.transacao.taxa_percentual }}%
+                    {% if par.diferenca_taxa %}<span class="text-warning-emphasis">(cadastro difere {{ par.diferenca_taxa }} p.p.)</span>{% endif %}
+                </div>
+                <div class="conf-sub">
+                    {% if par.criterio == 'liquido' %}
+                        <span class="badge text-bg-light border">casou pelo líquido — taxa embutida no cliente</span>
+                    {% else %}
+                        <span class="badge text-bg-light border">casou pelo bruto — taxa paga por você</span>
+                    {% endif %}
+                    {% if par.diferenca_valor %}
+                        <span class="badge text-bg-danger">difere R$ {{ par.diferenca_valor|floatformat:2 }}</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+
+        {% for lancamento in item.sem_par_sistema %}
+        <div class="conf-linha {% if lancamento.conferido %}is-conferido{% endif %}" data-linha>
+            <div>
+                <input class="form-check-input conf-check js-conferir" type="checkbox"
+                       data-lancamento="{{ lancamento.id }}"
+                       {% if lancamento.conferido %}checked{% endif %}>
+            </div>
+            <div class="conf-lado">
+                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-l-{{ lancamento.id }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
+                {% if lancamento.sem_comissao %}<span class="badge text-bg-info">SEM COMISSÃO</span>{% endif %}
+                <div class="conf-sub">
+                    {{ lancamento.servico.codigo }} - {{ lancamento.servico.nome }} ·
+                    {{ lancamento.forma_pagamento.nome|default:'Não informado' }} {{ lancamento.parcelas }}x
+                </div>
+            </div>
+            <div class="conf-lado conf-lado-extrato vazio">
+                {% if tem_extrato %}sem transação no extrato{% else %}—{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+
+        {% for transacao in item.sem_par_extrato %}
+        <div class="conf-linha">
+            <div><span class="text-danger fw-bold">!</span></div>
+            <div class="conf-lado vazio">sem lançamento no sistema</div>
+            <div class="conf-lado conf-lado-extrato">
+                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-x-{{ forloop.counter }}-{{ item.dia }}">R$ {{ transacao.bruto }}</span>
+                <div class="conf-sub">
+                    {{ transacao.hora }} · {{ transacao.meio }} · {{ transacao.origem }}
+                    {% if transacao.nome %} · {{ transacao.nome }}{% endif %}
+                </div>
+                <form method="post" class="mt-1">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="ignorar_transacao">
+                    <input type="hidden" name="ano" value="{{ ano }}">
+                    <input type="hidden" name="mes" value="{{ mes }}">
+                    <input type="hidden" name="dia" value="{{ item.dia }}">
+                    <input type="hidden" name="identificador" value="{{ transacao.identificador }}">
+                    <input type="hidden" name="referencia" value="{{ transacao.hora }} {{ transacao.meio }} R$ {{ transacao.bruto }} {{ transacao.nome }}">
+                    <button class="btn btn-sm btn-outline-secondary py-0" type="submit">Não é do salão</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+
+        {% for lancamento in item.permutas %}
+        <div class="conf-linha">
+            <div><span class="badge text-bg-warning">P</span></div>
+            <div class="conf-lado">
+                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-p-{{ lancamento.id }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
+                <div class="conf-sub">{{ lancamento.servico.codigo }} - {{ lancamento.servico.nome }}</div>
+            </div>
+            <div class="conf-lado conf-lado-extrato conf-sub">permuta — não passa pelo banco</div>
+        </div>
+        {% endfor %}
+    </div>
+</details>
+{% empty %}
+<div class="card card-soft"><div class="card-body text-center text-muted py-4">
+    Nada para conferir com os filtros atuais.
+</div></div>
+{% endfor %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const csrf = document.querySelector('input[name=csrfmiddlewaretoken]');
+    if (!csrf) return;
+
+    document.querySelectorAll('.js-conferir').forEach((check) => {
+        check.addEventListener('change', () => {
+            const linha = check.closest('[data-linha]');
+            const body = new URLSearchParams({
+                action: 'toggle_conferido',
+                lancamento_id: check.dataset.lancamento,
+                conferido: check.checked ? 'on' : '',
+                ano: '{{ ano }}',
+                mes: '{{ mes }}',
+            });
+            check.disabled = true;
+            fetch(window.location.pathname, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': csrf.value,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: body.toString(),
+            })
+                .then((response) => {
+                    if (!response.ok) throw new Error('falha');
+                    return response.json();
+                })
+                .then((payload) => {
+                    check.checked = payload.conferido;
+                    if (linha) linha.classList.toggle('is-conferido', payload.conferido);
+                })
+                .catch(() => {
+                    check.checked = !check.checked;
+                    alert('Não foi possível salvar a conferência. Tente novamente.');
+                })
+                .finally(() => { check.disabled = false; });
+        });
+    });
+})();
+</script>
+{% endblock %}

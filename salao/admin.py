@@ -13,6 +13,7 @@ from .models import (
     ServicoSalao,
     SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
+    TransacaoIgnoradaSalao,
 )
 
 
@@ -58,8 +59,8 @@ class TaxaFormaPagamentoSalaoAdmin(admin.ModelAdmin):
 
 @admin.register(LancamentoSalao)
 class LancamentoSalaoAdmin(admin.ModelAdmin):
-    list_display = ('data', 'servico', 'forma_pagamento', 'parcelas', 'valor_bruto', 'valor_taxa', 'valor_cobrado', 'criado_em')
-    list_filter = ('data', 'servico', 'forma_pagamento', 'parcelas')
+    list_display = ('data', 'servico', 'forma_pagamento', 'parcelas', 'valor_bruto', 'valor_taxa', 'valor_cobrado', 'conferido', 'criado_em')
+    list_filter = ('data', 'conferido', 'servico', 'forma_pagamento', 'parcelas')
     search_fields = ('servico__codigo', 'servico__nome', 'forma_pagamento__codigo', 'forma_pagamento__nome')
     date_hierarchy = 'data'
 
@@ -136,3 +137,9 @@ class MovimentoEstoqueSalaoAdmin(admin.ModelAdmin):
     list_filter = ('data', 'tipo', 'motivo', 'forma_pagamento', 'produto')
     search_fields = ('produto__codigo', 'produto__nome', 'observacao')
     date_hierarchy = 'data'
+
+
+@admin.register(TransacaoIgnoradaSalao)
+class TransacaoIgnoradaSalaoAdmin(admin.ModelAdmin):
+    list_display = ('referencia', 'identificador', 'criado_em')
+    search_fields = ('identificador', 'referencia')

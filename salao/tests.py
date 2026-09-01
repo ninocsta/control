@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 from openpyxl import load_workbook
@@ -20,7 +21,9 @@ from .models import (
     ServicoSalao,
     SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
+    TransacaoIgnoradaSalao,
 )
+from .views import _parse_extrato_csv
 
 
 class SalaoViewsTests(TestCase):
@@ -212,6 +215,260 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.context['lucro'], Decimal('190.00'))
         self.assertEqual(response.context['permuta_total_mes'], Decimal('0.00'))
         self.assertIn('meta_bullet_chart', response.context)
+
+    def test_grid_totais_normais_batem_com_o_dashboard(self):
+        self._login()
+
+        self._create_lancamento(
+            data=date(2026, 3, 10),
+            valor_bruto=Decimal('200.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 11),
+            valor_bruto=Decimal('100.00'),
+            permuta=True,
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 12),
+            valor_bruto=Decimal('50.00'),
+            forma_pagamento=self.forma_dinheiro,
+            sem_comissao=True,
+        )
+
+        grid = self.client.get(reverse('salao:grid_lancamentos'), {'ano': 2026, 'mes': 3})
+        dashboard = self.client.get(reverse('salao:dashboard'), {'ano': 2026, 'mes': 3})
+        totais = grid.context['totais']
+
+        # Total geral soma tudo; o subtotal "normais" é a base do dashboard.
+        self.assertEqual(totais['bruto'], Decimal('350.00'))
+        self.assertEqual(totais['quantidade'], 3)
+        self.assertEqual(totais['liquido_normais'], dashboard.context['faturamento_bruto'])
+        self.assertEqual(totais['bruto_normais'], dashboard.context['faturamento_bruto_cliente'])
+        self.assertEqual(totais['quantidade_normais'], 1)
+
+    # ------------------------------------------------------------------
+    # Conferência bancária
+    # ------------------------------------------------------------------
+    CSV_EXTRATO = (
+        'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+        'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+        'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+        # taxa embutida no cliente: o líquido é que fecha com o valor do serviço
+        '15/03/2026 14:02,Crédito,visa,À Vista,Maquininha,\'-,TX001,Aprovada,'
+        '"165,21","160,01","\'- 5,19",3.14,1 Dia Útil,S1,""\n'
+        # taxa paga pelo salão: o bruto é que fecha
+        '15/03/2026 15:10,Pix,Pix,À Vista,Maquininha,\'-,TX002,Aprovada,'
+        '"170,00","170,00","0,00",0,Outro,S2,""\n'
+        # recebimento por fora, sem lançamento no salão
+        '15/03/2026 12:06,Pix,Pix,À Vista,Conta Inteligente,\'-,TX003,Aprovada,'
+        '"8.000,00","8.000,00","0,00",0,Outro,S3,JEAN\n'
+        # cancelada: não entra na conferência
+        '15/03/2026 16:00,Crédito,visa,À Vista,Maquininha,\'-,TX004,Cancelada,'
+        '"90,00","87,00","\'- 3,00",3.14,1 Dia Útil,S4,""\n'
+        # outra competência: descartada na importação
+        '15/04/2026 10:00,Pix,Pix,À Vista,Maquininha,\'-,TX005,Aprovada,'
+        '"50,00","50,00","0,00",0,Outro,S5,""\n'
+    )
+
+    def _importar_extrato(self, csv_texto=None):
+        arquivo = SimpleUploadedFile(
+            'extrato.csv',
+            (csv_texto or self.CSV_EXTRATO).encode('utf-8'),
+            content_type='text/csv',
+        )
+        return self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'importar_extrato', 'ano': 2026, 'mes': 3, 'extrato': arquivo},
+            follow=True,
+        )
+
+    def _lancamentos_do_extrato(self):
+        """Os dois lançamentos que correspondem a TX001 (líquido) e TX002 (bruto)."""
+        self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('160.00'),
+            forma_pagamento=self.forma_credito,
+            taxa_percentual=Decimal('2.00'),
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('170.00'),
+            forma_pagamento=self.forma_pix,
+        )
+
+    def test_conferencia_parser_le_valores_pt_br_e_percentual_com_ponto(self):
+        transacoes, fora_competencia = _parse_extrato_csv(
+            BytesIO(self.CSV_EXTRATO.encode('utf-8')),
+            2026,
+            3,
+        )
+        self.assertEqual(fora_competencia, 1)
+        por_id = {t['identificador']: t for t in transacoes}
+        self.assertEqual(por_id['TX001']['bruto'], '165.21')
+        self.assertEqual(por_id['TX001']['liquido'], '160.01')
+        self.assertEqual(por_id['TX001']['taxa_percentual'], '3.14')
+        self.assertEqual(por_id['TX003']['bruto'], '8000.00')
+        self.assertEqual(por_id['TX004']['status'], 'Cancelada')
+
+    def test_conferencia_pareia_pelo_liquido_quando_a_taxa_foi_embutida(self):
+        self._login()
+        # Serviço de R$ 160,00 cobrado como R$ 165,21 no cartão para o líquido fechar em 160.
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('160.00'),
+            forma_pagamento=self.forma_credito,
+            taxa_percentual=Decimal('2.00'),
+        )
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        par = next(p for p in dia['pares'] if p['lancamento'].id == lancamento.id)
+        self.assertEqual(par['criterio'], 'liquido')
+        self.assertEqual(par['transacao']['identificador'], 'TX001')
+        # taxa real 3,14% contra 2,00% cadastrado
+        self.assertEqual(par['diferenca_taxa'], Decimal('1.14'))
+
+    def test_conferencia_pareia_pelo_bruto_quando_o_salao_pagou_a_taxa(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('170.00'),
+            forma_pagamento=self.forma_pix,
+            taxa_percentual=Decimal('0.00'),
+        )
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        par = next(
+            p for p in response.context['dias'][0]['pares']
+            if p['lancamento'].id == lancamento.id
+        )
+        self.assertEqual(par['criterio'], 'bruto')
+        self.assertEqual(par['transacao']['identificador'], 'TX002')
+        self.assertEqual(par['diferenca_valor'], Decimal('0.00'))
+
+    def test_conferencia_lista_transacao_do_extrato_sem_lancamento(self):
+        self._login()
+        self._lancamentos_do_extrato()
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        sem_par = response.context['dias'][0]['sem_par_extrato']
+        self.assertEqual([t['identificador'] for t in sem_par], ['TX003'])
+        # cancelada não entra na conciliação
+        self.assertEqual(
+            [t['identificador'] for t in response.context['transacoes_recusadas']],
+            ['TX004'],
+        )
+
+    def test_conferencia_transacao_ignorada_some_do_pareamento_e_persiste(self):
+        self._login()
+        self._lancamentos_do_extrato()
+        self._importar_extrato()
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'ignorar_transacao',
+                'ano': 2026,
+                'mes': 3,
+                'identificador': 'TX003',
+                'referencia': 'recebimento por fora',
+            },
+        )
+        self.assertTrue(TransacaoIgnoradaSalao.objects.filter(identificador='TX003').exists())
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        self.assertEqual(response.context['dias'][0]['sem_par_extrato'], [])
+        self.assertEqual(
+            [t['identificador'] for t in response.context['transacoes_ignoradas']],
+            ['TX003'],
+        )
+
+        # reimportar o mesmo CSV mantém o recebimento por fora de lado
+        self._importar_extrato()
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        self.assertEqual(response.context['dias'][0]['sem_par_extrato'], [])
+
+    def test_conferencia_permuta_fica_fora_do_pareamento(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('170.00'),
+            permuta=True,
+        )
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual(len(dia['permutas']), 1)
+        self.assertEqual(dia['pares'], [])
+        # a permuta não consumiu a transação de R$ 170,00 do extrato
+        self.assertIn('TX002', [t['identificador'] for t in dia['sem_par_extrato']])
+
+    def test_conferencia_marca_e_desmarca_conferido_via_ajax(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('170.00'),
+            forma_pagamento=self.forma_pix,
+        )
+
+        marcar = self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
+             'lancamento_id': lancamento.id, 'conferido': 'on'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(marcar.json()['conferido'], True)
+        lancamento.refresh_from_db()
+        self.assertTrue(lancamento.conferido)
+        self.assertIsNotNone(lancamento.conferido_em)
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
+             'lancamento_id': lancamento.id, 'conferido': ''},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        lancamento.refresh_from_db()
+        self.assertFalse(lancamento.conferido)
+        self.assertIsNone(lancamento.conferido_em)
+
+    def test_conferencia_conferir_dia_todo_marca_inclusive_permuta(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('170.00'), forma_pagamento=self.forma_pix,
+        )
+        self._create_lancamento(data=date(2026, 3, 15), valor_bruto=Decimal('90.00'), permuta=True)
+        fora_do_dia = self._create_lancamento(
+            data=date(2026, 3, 16), valor_bruto=Decimal('70.00'), forma_pagamento=self.forma_pix,
+        )
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'conferir_dia', 'ano': 2026, 'mes': 3, 'dia': 15},
+        )
+        self.assertEqual(
+            LancamentoSalao.objects.filter(data=date(2026, 3, 15), conferido=True).count(),
+            2,
+        )
+        fora_do_dia.refresh_from_db()
+        self.assertFalse(fora_do_dia.conferido)
+
+    def test_conferencia_filtra_por_dia(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('170.00'), forma_pagamento=self.forma_pix,
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 16), valor_bruto=Decimal('70.00'), forma_pagamento=self.forma_pix,
+        )
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3, 'dia': 16})
+        self.assertEqual([d['dia'] for d in response.context['dias']], [16])
 
     def test_dashboard_ignora_override_e_usa_comissao_automatica(self):
         self._login()

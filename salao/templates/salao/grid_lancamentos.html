@@ -76,6 +76,7 @@
                 Qtd. lançamentos
             </div>
             <div class="fw-bold">{{ totais.quantidade }}</div>
+            <div class="small text-muted">Normais: {{ totais.quantidade_normais }}</div>
         </div></div>
     </div>
     <div class="col-12 col-md-3">
@@ -85,6 +86,7 @@
                 Total Bruto
             </div>
             <div class="fw-bold">R$ {{ totais.bruto|floatformat:2 }}</div>
+            <div class="small text-muted js-sensitive" data-sensitive-type="money" data-sensitive-key="grid-bruto-normais">Normais: R$ {{ totais.bruto_normais|floatformat:2 }}</div>
         </div></div>
     </div>
     <div class="col-12 col-md-3">
@@ -103,6 +105,7 @@
                 Total Líquido
             </div>
             <div class="fw-bold">R$ {{ totais.liquido|floatformat:2 }}</div>
+            <div class="small text-muted js-sensitive" data-sensitive-type="money" data-sensitive-key="grid-liquido-normais">Normais: R$ {{ totais.liquido_normais|floatformat:2 }}</div>
         </div></div>
     </div>
 </div>
