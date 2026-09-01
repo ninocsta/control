@@ -324,7 +324,7 @@ class SalaoViewsTests(TestCase):
 
         response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
         dia = response.context['dias'][0]
-        par = next(p for p in dia['pares'] if p['lancamento'].id == lancamento.id)
+        par = next(p for p in dia['pares'] if p['lancamentos'][0].id == lancamento.id)
         self.assertEqual(par['criterio'], 'liquido')
         self.assertEqual(par['transacao']['identificador'], 'TX001')
         # taxa real 3,14% contra 2,00% cadastrado
@@ -343,7 +343,7 @@ class SalaoViewsTests(TestCase):
         response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
         par = next(
             p for p in response.context['dias'][0]['pares']
-            if p['lancamento'].id == lancamento.id
+            if p['lancamentos'][0].id == lancamento.id
         )
         self.assertEqual(par['criterio'], 'bruto')
         self.assertEqual(par['transacao']['identificador'], 'TX002')
@@ -386,10 +386,119 @@ class SalaoViewsTests(TestCase):
         response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
         par = next(
             p for p in response.context['dias'][0]['pares']
-            if p['lancamento'].id == credito.id
+            if p['lancamentos'][0].id == credito.id
         )
         self.assertEqual(par['transacao']['identificador'], 'TX001')
         self.assertEqual(par['diferenca_valor'], Decimal('-0.01'))
+
+    def test_conferencia_soma_lancamentos_para_fechar_uma_transacao(self):
+        """Cliente paga R$ 290,00 numa passada só, cobrindo dois serviços."""
+        self._login()
+        csv_290 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '15/03/2026 11:00,Pix,Pix,À Vista,Maquininha,\'-,TX290,Aprovada,'
+            '"290,00","290,00","0,00",0,Outro,S10,""\n'
+        )
+        a = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('170.00'), forma_pagamento=self.forma_pix,
+        )
+        b = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('120.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(csv_290)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual(len(dia['pares']), 1)
+        par = dia['pares'][0]
+        self.assertTrue(par['combinado'])
+        self.assertEqual({l.id for l in par['lancamentos']}, {a.id, b.id})
+        self.assertEqual(par['total_lancado'], Decimal('290.00'))
+        self.assertEqual(dia['sem_par_sistema'], [])
+        self.assertEqual(dia['sem_par_extrato'], [])
+
+    def test_conferencia_nao_soma_lancamentos_de_meios_diferentes(self):
+        self._login()
+        csv_290 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '15/03/2026 11:00,Pix,Pix,À Vista,Maquininha,\'-,TX290,Aprovada,'
+            '"290,00","290,00","0,00",0,Outro,S10,""\n'
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('170.00'), forma_pagamento=self.forma_pix,
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('120.00'), forma_pagamento=self.forma_dinheiro,
+        )
+        self._importar_extrato(csv_290)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual(dia['pares'], [])
+        self.assertEqual(len(dia['sem_par_sistema']), 2)
+
+    def test_conferencia_ajusta_lancamento_e_recalcula_a_taxa(self):
+        """Lançado R$ 100,00 mas o extrato mostra R$ 105,00: corrigir na tela."""
+        self._login()
+        TaxaFormaPagamentoSalao.objects.update_or_create(
+            forma_pagamento=self.forma_credito,
+            parcelas=1,
+            defaults={'percentual': Decimal('3.15')},
+        )
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_pix,
+        )
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'ajustar_lancamento',
+                'ano': 2026,
+                'mes': 3,
+                'lancamento_id': lancamento.id,
+                'valor_bruto': '105,00',
+                'forma_pagamento_id': self.forma_credito.id,
+                'parcelas': 1,
+            },
+        )
+
+        lancamento.refresh_from_db()
+        self.assertEqual(lancamento.valor_bruto, Decimal('105.00'))
+        self.assertEqual(lancamento.forma_pagamento_id, self.forma_credito.id)
+        self.assertEqual(lancamento.taxa_percentual_aplicada, Decimal('3.15'))
+        self.assertEqual(lancamento.valor_taxa, Decimal('3.31'))
+        self.assertEqual(lancamento.valor_cobrado, Decimal('101.69'))
+
+    def test_conferencia_ajuste_recusa_forma_sem_taxa_cadastrada(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_pix,
+        )
+        TaxaFormaPagamentoSalao.objects.filter(
+            forma_pagamento=self.forma_credito, parcelas=7,
+        ).delete()
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'ajustar_lancamento',
+                'ano': 2026, 'mes': 3,
+                'lancamento_id': lancamento.id,
+                'valor_bruto': '105,00',
+                'forma_pagamento_id': self.forma_credito.id,
+                'parcelas': 7,
+            },
+        )
+        lancamento.refresh_from_db()
+        self.assertEqual(lancamento.valor_bruto, Decimal('100.00'))
 
     def test_conferencia_lista_transacao_do_extrato_sem_lancamento(self):
         self._login()

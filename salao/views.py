@@ -5,6 +5,7 @@ import re
 import unicodedata
 import uuid
 from collections import defaultdict
+from itertools import combinations
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -530,9 +531,43 @@ def _parse_extrato_csv(arquivo, ano, mes):
     return transacoes, fora_competencia
 
 
-# A taxa real varia por bandeira (crédito à vista vem 3,14% / 4,19% / 4,90%...),
+# A taxa real varia por bandeira (elo sai ~1,8 p.p. acima de visa/mastercard),
 # então só vale avisar quando a diferença para o cadastro é grande o bastante.
 TOLERANCIA_TAXA_PP = Decimal('0.50')
+
+# Quantos lançamentos podem ser somados para fechar uma única transação
+# (cliente que paga 290 numa passada só, cobrindo um serviço de 170 e outro de 120).
+MAX_LANCAMENTOS_POR_TRANSACAO = 3
+
+
+def _meio_do_lancamento(lancamento):
+    return _normalizar_texto(
+        lancamento.forma_pagamento.nome if lancamento.forma_pagamento else ''
+    )
+
+
+def _montar_par(lancamentos, transacao, criterio, diferenca):
+    """Monta a linha de conferência de uma transação já casada.
+
+    A comparação de taxa só faz sentido quando um único lançamento cobre a
+    transação; somando vários, cada um pode ter a sua.
+    """
+    diferenca_taxa = None
+    if len(lancamentos) == 1:
+        diferenca_taxa = (
+            Decimal(transacao['taxa_percentual']) - lancamentos[0].taxa_percentual_aplicada
+        ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    return {
+        'lancamentos': lancamentos,
+        'transacao': transacao,
+        'criterio': criterio,
+        'combinado': len(lancamentos) > 1,
+        'total_lancado': sum((l.valor_bruto for l in lancamentos), Decimal('0.00')),
+        'todos_conferidos': all(l.conferido for l in lancamentos),
+        'diferenca_valor': diferenca.quantize(Decimal('0.01')),
+        'diferenca_taxa': diferenca_taxa,
+        'taxa_divergente': diferenca_taxa is not None and abs(diferenca_taxa) > TOLERANCIA_TAXA_PP,
+    }
 
 
 def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
@@ -542,8 +577,9 @@ def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
     ora é o valor do serviço com a taxa embutida no cartão (= líquido do
     extrato). Por isso cada passada testa os dois lados:
 
-        1. mesmo meio + valor exato (no bruto ou no líquido)
-        2. mesmo meio + dentro da tolerância, escolhendo a menor diferença
+        1. um lançamento, valor exato (no bruto ou no líquido)
+        2. um lançamento, dentro da tolerância
+        3. vários lançamentos somados fechando uma transação só
 
     O meio de pagamento é sempre obrigatório: sem isso um Dinheiro de R$ 100,00
     casaria com um Crédito de R$ 99,91 só porque o valor ficou perto. Quando o
@@ -553,43 +589,53 @@ def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
     pendentes = list(lancamentos)
     pares = []
 
-    def candidatos(lancamento, limite):
-        meio_lancamento = _normalizar_texto(
-            lancamento.forma_pagamento.nome if lancamento.forma_pagamento else ''
-        )
+    def avaliar(total, meio, limite):
+        """Melhor transação disponível para um valor somado, ou None."""
+        melhor = None
         for transacao in disponiveis:
-            if _normalizar_texto(transacao['meio']) != meio_lancamento:
+            if _normalizar_texto(transacao['meio']) != meio:
                 continue
             for criterio in ('bruto', 'liquido'):
-                diferenca = lancamento.valor_bruto - Decimal(transacao[criterio])
-                if abs(diferenca) <= limite:
-                    yield abs(diferenca), transacao, criterio, diferenca
+                diferenca = total - Decimal(transacao[criterio])
+                if abs(diferenca) <= limite and (melhor is None or abs(diferenca) < melhor[0]):
+                    melhor = (abs(diferenca), transacao, criterio, diferenca)
+        return melhor
+
+    def registrar(grupo, escolha):
+        _, transacao, criterio, diferenca = escolha
+        disponiveis.remove(transacao)
+        for lancamento in grupo:
+            pendentes.remove(lancamento)
+        pares.append(_montar_par(grupo, transacao, criterio, diferenca))
 
     for limite in (Decimal('0.00'), tolerancia):
         for lancamento in list(pendentes):
-            melhor = min(
-                candidatos(lancamento, limite),
-                key=lambda item: item[0],
-                default=None,
-            )
-            if melhor is None:
-                continue
-            _, transacao, criterio, diferenca = melhor
-            disponiveis.remove(transacao)
-            pendentes.remove(lancamento)
-            diferenca_taxa = (
-                Decimal(transacao['taxa_percentual']) - lancamento.taxa_percentual_aplicada
-            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            pares.append({
-                'lancamento': lancamento,
-                'transacao': transacao,
-                'criterio': criterio,
-                'diferenca_valor': diferenca.quantize(Decimal('0.01')),
-                'diferenca_taxa': diferenca_taxa,
-                'taxa_divergente': abs(diferenca_taxa) > TOLERANCIA_TAXA_PP,
-            })
+            escolha = avaliar(lancamento.valor_bruto, _meio_do_lancamento(lancamento), limite)
+            if escolha:
+                registrar([lancamento], escolha)
 
-    pares.sort(key=lambda par: par['lancamento'].id)
+    # Sobras: tenta fechar uma transação somando lançamentos do mesmo meio.
+    por_meio = defaultdict(list)
+    for lancamento in pendentes:
+        por_meio[_meio_do_lancamento(lancamento)].append(lancamento)
+
+    for meio, grupo_meio in por_meio.items():
+        for tamanho in range(2, MAX_LANCAMENTOS_POR_TRANSACAO + 1):
+            while True:
+                candidatos = [l for l in grupo_meio if l in pendentes]
+                if len(candidatos) < tamanho:
+                    break
+                achou = None
+                for combinacao in combinations(candidatos, tamanho):
+                    total = sum((l.valor_bruto for l in combinacao), Decimal('0.00'))
+                    escolha = avaliar(total, meio, tolerancia)
+                    if escolha and (achou is None or escolha[0] < achou[1][0]):
+                        achou = (list(combinacao), escolha)
+                if achou is None:
+                    break
+                registrar(*achou)
+
+    pares.sort(key=lambda par: par['lancamentos'][0].id)
     return pares, pendentes, disponiveis
 
 
@@ -2176,6 +2222,60 @@ def conferencia(request):
                 return JsonResponse({'ok': True, 'conferido': lancamento.conferido})
             return _redirect_conferencia(ano, mes, request.POST.get('dia'))
 
+        if action == 'ajustar_lancamento':
+            lancamento = get_object_or_404(LancamentoSalao, pk=request.POST.get('lancamento_id'))
+            dia_origem = lancamento.data.day
+            valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
+            if valor_bruto is None or valor_bruto < Decimal('0.00'):
+                messages.error(request, 'Informe um valor bruto válido.')
+                return _redirect_conferencia(ano, mes, dia_origem)
+
+            forma_pagamento = FormaPagamentoSalao.objects.filter(
+                pk=request.POST.get('forma_pagamento_id'),
+                ativo=True,
+            ).first()
+            if not forma_pagamento:
+                messages.error(request, 'Selecione uma forma de pagamento ativa.')
+                return _redirect_conferencia(ano, mes, dia_origem)
+
+            parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
+            if not forma_pagamento.aceita_parcelamento:
+                parcelas = 1
+
+            taxa = TaxaFormaPagamentoSalao.objects.filter(
+                forma_pagamento=forma_pagamento,
+                parcelas=parcelas,
+            ).first()
+            if not taxa:
+                messages.error(
+                    request,
+                    f'Taxa não cadastrada para {forma_pagamento.nome} em {parcelas}x.',
+                )
+                return _redirect_conferencia(ano, mes, dia_origem)
+
+            valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa.percentual)
+            lancamento.valor_bruto = valor_bruto
+            lancamento.forma_pagamento = forma_pagamento
+            lancamento.parcelas = parcelas
+            lancamento.taxa_percentual_aplicada = taxa.percentual
+            lancamento.valor_taxa = valor_taxa
+            lancamento.valor_cobrado = valor_liquido
+            lancamento.save(update_fields=[
+                'valor_bruto',
+                'forma_pagamento',
+                'parcelas',
+                'taxa_percentual_aplicada',
+                'valor_taxa',
+                'valor_cobrado',
+                'atualizado_em',
+            ])
+            messages.success(
+                request,
+                f'Lançamento ajustado para R$ {valor_bruto} em {forma_pagamento.nome} '
+                f'{parcelas}x. Líquido: R$ {valor_liquido}.',
+            )
+            return _redirect_conferencia(ano, mes, dia_origem)
+
         if action in {'conferir_dia', 'desconferir_dia'}:
             dia = _parse_day(request, ano, mes)
             if dia is None:
@@ -2339,6 +2439,7 @@ def conferencia(request):
         'somente_pendentes': somente_pendentes,
         'dias': dias_context,
         'tolerancia': tolerancia,
+        'formas_pagamento_ativas': FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'),
         'tem_extrato': bool(transacoes_sessao),
         'transacoes_recusadas': transacoes_recusadas,
         'transacoes_ignoradas': transacoes_ignoradas,

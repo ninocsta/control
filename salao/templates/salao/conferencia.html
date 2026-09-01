@@ -237,23 +237,34 @@
         </div>
 
         {% for par in item.pares %}
-        <div class="conf-linha {% if par.lancamento.conferido %}is-conferido{% endif %}" data-linha>
-            <div>
+        <div class="conf-linha {% if par.todos_conferidos %}is-conferido{% endif %}">
+            <div class="d-flex flex-column gap-1">
+                {% for lancamento in par.lancamentos %}
                 <input class="form-check-input conf-check js-conferir" type="checkbox"
-                       data-lancamento="{{ par.lancamento.id }}"
-                       {% if par.lancamento.conferido %}checked{% endif %}>
+                       data-lancamento="{{ lancamento.id }}"
+                       {% if lancamento.conferido %}checked{% endif %}>
+                {% endfor %}
             </div>
             <div class="conf-lado">
-                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-l-{{ par.lancamento.id }}">R$ {{ par.lancamento.valor_bruto|floatformat:2 }}</span>
-                {% if par.lancamento.sem_comissao %}<span class="badge text-bg-info">SEM COMISSÃO</span>{% endif %}
-                <div class="conf-sub">
-                    {{ par.lancamento.servico.codigo }} - {{ par.lancamento.servico.nome }} ·
-                    {{ par.lancamento.forma_pagamento.nome|default:'Não informado' }} {{ par.lancamento.parcelas }}x ·
-                    taxa {{ par.lancamento.taxa_percentual_aplicada|floatformat:2 }}%
+                {% for lancamento in par.lancamentos %}
+                <div{% if not forloop.first %} class="mt-1 pt-1 border-top"{% endif %}>
+                    <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-l-{{ lancamento.id }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
+                    {% if lancamento.sem_comissao %}<span class="badge text-bg-info">SEM COMISSÃO</span>{% endif %}
+                    <div class="conf-sub">
+                        {{ lancamento.servico.codigo }} - {{ lancamento.servico.nome }} ·
+                        {{ lancamento.forma_pagamento.nome|default:'Não informado' }} {{ lancamento.parcelas }}x ·
+                        taxa {{ lancamento.taxa_percentual_aplicada|floatformat:2 }}%
+                    </div>
                 </div>
+                {% endfor %}
+                {% if par.combinado %}
+                <div class="conf-sub mt-1">
+                    <span class="badge text-bg-primary">{{ par.lancamentos|length }} lançamentos somam R$ {{ par.total_lancado|floatformat:2 }}</span>
+                </div>
+                {% endif %}
             </div>
             <div class="conf-lado conf-lado-extrato">
-                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-t-{{ par.lancamento.id }}">R$ {{ par.transacao.bruto }}</span>
+                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-t-{{ par.transacao.identificador }}">R$ {{ par.transacao.bruto }}</span>
                 <div class="conf-sub">
                     {{ par.transacao.hora }} · {{ par.transacao.meio }}{% if par.transacao.bandeira and par.transacao.bandeira != par.transacao.meio %} {{ par.transacao.bandeira }}{% endif %} ·
                     {{ par.transacao.parcelas }}x · líquido R$ {{ par.transacao.liquido }} · taxa {{ par.transacao.taxa_percentual }}%
@@ -269,6 +280,7 @@
                         <span class="badge text-bg-danger">difere R$ {{ par.diferenca_valor|floatformat:2 }}</span>
                     {% endif %}
                 </div>
+                {% include 'salao/partials/conferencia_ignorar.html' with transacao=par.transacao dia=item.dia %}
             </div>
         </div>
         {% endfor %}
@@ -288,8 +300,36 @@
                     {{ lancamento.forma_pagamento.nome|default:'Não informado' }} {{ lancamento.parcelas }}x
                 </div>
             </div>
-            <div class="conf-lado conf-lado-extrato vazio">
-                {% if tem_extrato %}sem transação no extrato{% else %}—{% endif %}
+            <div class="conf-lado conf-lado-extrato">
+                <div class="vazio">{% if tem_extrato %}sem transação no extrato{% else %}—{% endif %}</div>
+                <details class="mt-1">
+                    <summary class="conf-sub" style="cursor:pointer">Ajustar lançamento</summary>
+                    <form method="post" class="row g-1 mt-1">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="ajustar_lancamento">
+                        <input type="hidden" name="ano" value="{{ ano }}">
+                        <input type="hidden" name="mes" value="{{ mes }}">
+                        <input type="hidden" name="lancamento_id" value="{{ lancamento.id }}">
+                        <div class="col-4">
+                            <input type="text" class="form-control form-control-sm" name="valor_bruto"
+                                   value="{{ lancamento.valor_bruto|floatformat:2 }}" aria-label="Valor bruto">
+                        </div>
+                        <div class="col-5">
+                            <select class="form-select form-select-sm" name="forma_pagamento_id" aria-label="Forma de pagamento">
+                                {% for forma in formas_pagamento_ativas %}
+                                <option value="{{ forma.id }}" {% if lancamento.forma_pagamento_id == forma.id %}selected{% endif %}>{{ forma.nome }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-3">
+                            <input type="number" min="1" max="12" class="form-control form-control-sm"
+                                   name="parcelas" value="{{ lancamento.parcelas }}" aria-label="Parcelas">
+                        </div>
+                        <div class="col-12">
+                            <button class="btn btn-sm btn-primary w-100 py-0" type="submit">Salvar e recalcular taxa</button>
+                        </div>
+                    </form>
+                </details>
             </div>
         </div>
         {% endfor %}
@@ -304,16 +344,7 @@
                     {{ transacao.hora }} · {{ transacao.meio }} · {{ transacao.origem }}
                     {% if transacao.nome %} · {{ transacao.nome }}{% endif %}
                 </div>
-                <form method="post" class="mt-1">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="ignorar_transacao">
-                    <input type="hidden" name="ano" value="{{ ano }}">
-                    <input type="hidden" name="mes" value="{{ mes }}">
-                    <input type="hidden" name="dia" value="{{ item.dia }}">
-                    <input type="hidden" name="identificador" value="{{ transacao.identificador }}">
-                    <input type="hidden" name="referencia" value="{{ transacao.hora }} {{ transacao.meio }} R$ {{ transacao.bruto }} {{ transacao.nome }}">
-                    <button class="btn btn-sm btn-outline-secondary py-0" type="submit">Não é do salão</button>
-                </form>
+                {% include 'salao/partials/conferencia_ignorar.html' with transacao=transacao dia=item.dia %}
             </div>
         </div>
         {% endfor %}
