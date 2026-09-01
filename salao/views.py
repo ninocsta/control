@@ -530,41 +530,45 @@ def _parse_extrato_csv(arquivo, ano, mes):
     return transacoes, fora_competencia
 
 
+# A taxa real varia por bandeira (crédito à vista vem 3,14% / 4,19% / 4,90%...),
+# então só vale avisar quando a diferença para o cadastro é grande o bastante.
+TOLERANCIA_TAXA_PP = Decimal('0.50')
+
+
 def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
     """Casa lançamentos do sistema com transações do extrato, dentro de um dia.
 
     O valor lançado no sistema ora é o que o cliente pagou (= bruto do extrato),
     ora é o valor do serviço com a taxa embutida no cartão (= líquido do
-    extrato). Por isso cada passada testa os dois lados. A ordem vai do critério
-    mais forte para o mais fraco, e nada casa duas vezes:
+    extrato). Por isso cada passada testa os dois lados:
 
-        1. valor exato + mesmo meio de pagamento
-        2. valor exato, qualquer meio
-        3. dentro da tolerância, escolhendo a menor diferença
+        1. mesmo meio + valor exato (no bruto ou no líquido)
+        2. mesmo meio + dentro da tolerância, escolhendo a menor diferença
 
-    Sobras dos dois lados voltam explícitas para conferência manual.
+    O meio de pagamento é sempre obrigatório: sem isso um Dinheiro de R$ 100,00
+    casaria com um Crédito de R$ 99,91 só porque o valor ficou perto. Quando o
+    meio não bate, o certo é sobrar dos dois lados e aparecer para conferência.
     """
     disponiveis = list(transacoes)
     pendentes = list(lancamentos)
     pares = []
 
-    def candidatos(lancamento, exigir_meio, limite):
+    def candidatos(lancamento, limite):
         meio_lancamento = _normalizar_texto(
             lancamento.forma_pagamento.nome if lancamento.forma_pagamento else ''
         )
         for transacao in disponiveis:
-            if exigir_meio and _normalizar_texto(transacao['meio']) != meio_lancamento:
+            if _normalizar_texto(transacao['meio']) != meio_lancamento:
                 continue
             for criterio in ('bruto', 'liquido'):
                 diferenca = lancamento.valor_bruto - Decimal(transacao[criterio])
                 if abs(diferenca) <= limite:
                     yield abs(diferenca), transacao, criterio, diferenca
 
-    zero = Decimal('0.00')
-    for exigir_meio, limite in ((True, zero), (False, zero), (False, tolerancia)):
+    for limite in (Decimal('0.00'), tolerancia):
         for lancamento in list(pendentes):
             melhor = min(
-                candidatos(lancamento, exigir_meio, limite),
+                candidatos(lancamento, limite),
                 key=lambda item: item[0],
                 default=None,
             )
@@ -573,14 +577,16 @@ def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
             _, transacao, criterio, diferenca = melhor
             disponiveis.remove(transacao)
             pendentes.remove(lancamento)
+            diferenca_taxa = (
+                Decimal(transacao['taxa_percentual']) - lancamento.taxa_percentual_aplicada
+            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             pares.append({
                 'lancamento': lancamento,
                 'transacao': transacao,
                 'criterio': criterio,
                 'diferenca_valor': diferenca.quantize(Decimal('0.01')),
-                'diferenca_taxa': (
-                    Decimal(transacao['taxa_percentual']) - lancamento.taxa_percentual_aplicada
-                ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                'diferenca_taxa': diferenca_taxa,
+                'taxa_divergente': abs(diferenca_taxa) > TOLERANCIA_TAXA_PP,
             })
 
     pares.sort(key=lambda par: par['lancamento'].id)

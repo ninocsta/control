@@ -349,6 +349,48 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(par['transacao']['identificador'], 'TX002')
         self.assertEqual(par['diferenca_valor'], Decimal('0.00'))
 
+    def test_conferencia_nao_pareia_meios_de_pagamento_diferentes(self):
+        """Dinheiro de R$ 100,00 não pode casar com Crédito de R$ 103,15/99,91."""
+        self._login()
+        csv_credito = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '15/03/2026 16:06,Crédito,mastercard,À Vista,Maquininha,\'-,TXC,Aprovada,'
+            '"103,15","99,91","\'- 3,24",3.14,1 Dia Útil,S9,""\n'
+        )
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+        self._importar_extrato(csv_credito)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual(dia['pares'], [])
+        self.assertEqual([l.id for l in dia['sem_par_sistema']], [lancamento.id])
+        self.assertEqual([t['identificador'] for t in dia['sem_par_extrato']], ['TXC'])
+
+    def test_conferencia_tolerancia_so_vale_dentro_do_mesmo_meio(self):
+        self._login()
+        # mesmo meio e centavo de diferença: casa
+        credito = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('160.00'),
+            forma_pagamento=self.forma_credito,
+            taxa_percentual=Decimal('3.15'),
+        )
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        par = next(
+            p for p in response.context['dias'][0]['pares']
+            if p['lancamento'].id == credito.id
+        )
+        self.assertEqual(par['transacao']['identificador'], 'TX001')
+        self.assertEqual(par['diferenca_valor'], Decimal('-0.01'))
+
     def test_conferencia_lista_transacao_do_extrato_sem_lancamento(self):
         self._login()
         self._lancamentos_do_extrato()
