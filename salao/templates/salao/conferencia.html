@@ -158,6 +158,15 @@
     </div>
 </div>
 
+{% if extrato_outra_competencia %}
+<div class="alert alert-warning py-2">
+    O extrato carregado não tem nenhuma transação de {{ mes|stringformat:'02d' }}/{{ ano }}. Ele cobre:
+    {% for item in extrato_outra_competencia %}
+        <a href="{% url 'salao:conferencia' %}?ano={{ item.ano }}&mes={{ item.mes }}" class="fw-bold">{{ item.mes|stringformat:'02d' }}/{{ item.ano }}</a> ({{ item.quantidade }}){% if not forloop.last %}, {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+
 {% if tem_extrato and resumo.sem_par_extrato %}
 <div class="alert alert-warning py-2">
     <strong>{{ resumo.sem_par_extrato }}</strong> transação(ões) do extrato sem lançamento correspondente —

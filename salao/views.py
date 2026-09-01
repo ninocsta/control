@@ -4,7 +4,7 @@ import io
 import re
 import unicodedata
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import combinations
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -475,8 +475,13 @@ def _parse_parcelas_extrato(raw_value):
     return int(somente_digitos) if somente_digitos else 1
 
 
-def _parse_extrato_csv(arquivo, ano, mes):
-    """Lê o CSV da adquirente e devolve (transacoes, ignoradas_fora_da_competencia)."""
+def _parse_extrato_csv(arquivo):
+    """Lê o CSV da adquirente e devolve todas as transações do arquivo.
+
+    Não filtra por competência: cada linha já carrega a própria data, então a
+    tela decide o que mostrar. Assim o extrato importa certo independente do
+    mês que estiver selecionado no filtro.
+    """
     conteudo = arquivo.read()
     if isinstance(conteudo, bytes):
         conteudo = conteudo.decode('utf-8-sig', errors='replace')
@@ -496,7 +501,6 @@ def _parse_extrato_csv(arquivo, ano, mes):
         )
 
     transacoes = []
-    fora_competencia = 0
     for linha in leitor:
         bruto_data = (linha.get(_CSV_COLUNAS['data']) or '').strip()
         if not bruto_data:
@@ -509,11 +513,9 @@ def _parse_extrato_csv(arquivo, ano, mes):
             except ValueError:
                 continue
 
-        if data_hora.year != ano or data_hora.month != mes:
-            fora_competencia += 1
-            continue
-
         transacoes.append({
+            'ano': data_hora.year,
+            'mes': data_hora.month,
             'dia': data_hora.day,
             'hora': data_hora.strftime('%H:%M'),
             'meio': (linha.get(_CSV_COLUNAS['meio']) or '').strip(),
@@ -528,7 +530,7 @@ def _parse_extrato_csv(arquivo, ano, mes):
             'nome': (linha.get(_CSV_COLUNAS['nome']) or '').strip(),
         })
 
-    return transacoes, fora_competencia
+    return transacoes
 
 
 # A taxa real varia por bandeira (elo sai ~1,8 p.p. acima de visa/mastercard),
@@ -2208,7 +2210,6 @@ def dashboard_relatorio_lancamentos(request):
 @_salao_superuser_required
 def conferencia(request):
     ano, mes = _parse_competencia(request)
-    sessao_key = f'{CONFERENCIA_SESSION_KEY}_{ano}_{mes}'
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -2299,16 +2300,30 @@ def conferencia(request):
                 messages.error(request, 'Selecione o arquivo CSV do relatório da adquirente.')
                 return _redirect_conferencia(ano, mes, None)
             try:
-                transacoes, fora_competencia = _parse_extrato_csv(arquivo, ano, mes)
+                transacoes = _parse_extrato_csv(arquivo)
             except ValueError as erro:
                 messages.error(request, str(erro))
                 return _redirect_conferencia(ano, mes, None)
 
-            request.session[sessao_key] = transacoes
-            aviso = f'Extrato importado: {len(transacoes)} transação(ões) de {mes:02d}/{ano}.'
-            if fora_competencia:
-                aviso += f' {fora_competencia} linha(s) de outra competência foram ignoradas.'
-            messages.success(request, aviso)
+            if not transacoes:
+                messages.error(request, 'Nenhuma transação encontrada no arquivo.')
+                return _redirect_conferencia(ano, mes, None)
+
+            request.session[CONFERENCIA_SESSION_KEY] = transacoes
+            competencias = Counter((t['ano'], t['mes']) for t in transacoes)
+            resumo = ', '.join(
+                f'{item_mes:02d}/{item_ano} ({quantidade})'
+                for (item_ano, item_mes), quantidade in sorted(competencias.items())
+            )
+            messages.success(
+                request,
+                f'Extrato importado: {len(transacoes)} transação(ões) — {resumo}.',
+            )
+
+            # O arquivo é que manda: se a competência aberta não tem nada dele,
+            # abre direto o mês com mais transações em vez de mostrar tela vazia.
+            if (ano, mes) not in competencias:
+                (ano, mes), _ = competencias.most_common(1)[0]
             return _redirect_conferencia(ano, mes, None)
 
         if action == 'ignorar_transacao':
@@ -2329,7 +2344,7 @@ def conferencia(request):
             return _redirect_conferencia(ano, mes, request.POST.get('dia'))
 
         if action == 'limpar_extrato':
-            request.session.pop(sessao_key, None)
+            request.session.pop(CONFERENCIA_SESSION_KEY, None)
             messages.success(request, 'Extrato removido da conferência.')
             return _redirect_conferencia(ano, mes, None)
 
@@ -2343,7 +2358,10 @@ def conferencia(request):
     if tolerancia is None or tolerancia < Decimal('0.00'):
         tolerancia = Decimal('1.00')
 
-    transacoes_sessao = request.session.get(sessao_key) or []
+    transacoes_arquivo = request.session.get(CONFERENCIA_SESSION_KEY) or []
+    transacoes_sessao = [
+        t for t in transacoes_arquivo if t['ano'] == ano and t['mes'] == mes
+    ]
     identificadores_ignorados = set(
         TransacaoIgnoradaSalao.objects.values_list('identificador', flat=True)
     )
@@ -2441,6 +2459,12 @@ def conferencia(request):
         'tolerancia': tolerancia,
         'formas_pagamento_ativas': FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'),
         'tem_extrato': bool(transacoes_sessao),
+        'extrato_outra_competencia': [
+            {'ano': item_ano, 'mes': item_mes, 'quantidade': quantidade}
+            for (item_ano, item_mes), quantidade in sorted(
+                Counter((t['ano'], t['mes']) for t in transacoes_arquivo).items()
+            )
+        ] if transacoes_arquivo and not transacoes_sessao else [],
         'transacoes_recusadas': transacoes_recusadas,
         'transacoes_ignoradas': transacoes_ignoradas,
         'resumo': {

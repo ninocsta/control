@@ -298,13 +298,11 @@ class SalaoViewsTests(TestCase):
         )
 
     def test_conferencia_parser_le_valores_pt_br_e_percentual_com_ponto(self):
-        transacoes, fora_competencia = _parse_extrato_csv(
-            BytesIO(self.CSV_EXTRATO.encode('utf-8')),
-            2026,
-            3,
-        )
-        self.assertEqual(fora_competencia, 1)
+        transacoes = _parse_extrato_csv(BytesIO(self.CSV_EXTRATO.encode('utf-8')))
+        # o parser não descarta nada: a linha de abril entra com a própria data
+        self.assertEqual(len(transacoes), 5)
         por_id = {t['identificador']: t for t in transacoes}
+        self.assertEqual((por_id['TX005']['ano'], por_id['TX005']['mes']), (2026, 4))
         self.assertEqual(por_id['TX001']['bruto'], '165.21')
         self.assertEqual(por_id['TX001']['liquido'], '160.01')
         self.assertEqual(por_id['TX001']['taxa_percentual'], '3.14')
@@ -390,6 +388,50 @@ class SalaoViewsTests(TestCase):
         )
         self.assertEqual(par['transacao']['identificador'], 'TX001')
         self.assertEqual(par['diferenca_valor'], Decimal('-0.01'))
+
+    def test_conferencia_importa_extrato_com_o_filtro_em_outra_competencia(self):
+        """O CSV é de 03/2026; importar com a tela em 08/2028 não pode perder nada."""
+        self._login()
+        self._lancamentos_do_extrato()
+
+        response = self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'importar_extrato',
+                'ano': 2028,
+                'mes': 8,
+                'extrato': SimpleUploadedFile(
+                    'extrato.csv', self.CSV_EXTRATO.encode('utf-8'), content_type='text/csv',
+                ),
+            },
+            follow=True,
+        )
+        # redireciona para a competência do próprio arquivo
+        self.assertEqual((response.context['ano'], response.context['mes']), (2026, 3))
+        self.assertTrue(response.context['tem_extrato'])
+        self.assertEqual(len(response.context['dias'][0]['pares']), 2)
+
+    def test_conferencia_avisa_quando_o_extrato_e_de_outro_mes(self):
+        self._login()
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 12})
+        self.assertFalse(response.context['tem_extrato'])
+        cobertura = {
+            (item['ano'], item['mes']) for item in response.context['extrato_outra_competencia']
+        }
+        self.assertEqual(cobertura, {(2026, 3), (2026, 4)})
+
+    def test_conferencia_extrato_sobrevive_a_troca_de_competencia(self):
+        self._login()
+        self._lancamentos_do_extrato()
+        self._importar_extrato()
+
+        # passa por abril (só TX005) e volta para março sem reimportar
+        abril = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 4})
+        self.assertTrue(abril.context['tem_extrato'])
+        marco = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        self.assertEqual(len(marco.context['dias'][0]['pares']), 2)
 
     def test_conferencia_soma_lancamentos_para_fechar_uma_transacao(self):
         """Cliente paga R$ 290,00 numa passada só, cobrindo dois serviços."""
