@@ -300,6 +300,16 @@
         </div>
         {% endfor %}
 
+        {% if item.sobras %}
+        <div class="alert alert-warning py-2 my-2 small">
+            Sobrou dos dois lados neste dia:
+            <strong class="js-sensitive" data-sensitive-type="money" data-sensitive-key="sobra-sis-{{ item.dia }}">R$ {{ item.sobras.soma_sistema|floatformat:2 }}</strong> no sistema
+            contra <strong class="js-sensitive" data-sensitive-type="money" data-sensitive-key="sobra-ext-{{ item.dia }}">R$ {{ item.sobras.soma_extrato|floatformat:2 }}</strong> no extrato —
+            diferença de <strong class="js-sensitive" data-sensitive-type="money" data-sensitive-key="sobra-dif-{{ item.dia }}">R$ {{ item.sobras.diferenca|floatformat:2 }}</strong>.
+            Ajuste o item errado abaixo ou marque a transação como fora do salão.
+        </div>
+        {% endif %}
+
         {% for lancamento in item.sem_par_sistema %}
         <div class="conf-linha {% if lancamento.conferido %}is-conferido{% endif %}" data-linha>
             <div>
@@ -318,16 +328,15 @@
             </div>
             <div class="conf-lado conf-lado-extrato">
                 <div class="vazio">{% if tem_extrato %}sem transação no extrato{% else %}—{% endif %}</div>
-                {% if lancamento.ajustavel %}
                 <details class="mt-1">
-                    <summary class="conf-sub" style="cursor:pointer">Ajustar lançamento</summary>
+                    <summary class="conf-sub" style="cursor:pointer">Ajustar {% if lancamento.tipo == 'produto' %}venda{% else %}lançamento{% endif %}</summary>
                     <form method="post" class="row g-1 mt-1">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="ajustar_lancamento">
                         <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
                         <input type="hidden" name="ano" value="{{ ano }}">
                         <input type="hidden" name="mes" value="{{ mes }}">
-                        <input type="hidden" name="lancamento_id" value="{{ lancamento.id }}">
+                        <input type="hidden" name="item" value="{{ lancamento.chave }}">
                         <div class="col-4">
                             <input type="text" class="form-control form-control-sm" name="valor_bruto"
                                    value="{{ lancamento.valor_bruto|floatformat:2 }}" aria-label="Valor bruto">
@@ -346,11 +355,11 @@
                         <div class="col-12">
                             <button class="btn btn-sm btn-primary w-100 py-0" type="submit">Salvar e recalcular taxa</button>
                         </div>
+                        {% if lancamento.tipo == 'produto' %}
+                        <div class="col-12 conf-sub">Muda só o preço de venda; quantidade e estoque não são tocados.</div>
+                        {% endif %}
                     </form>
                 </details>
-                {% else %}
-                <div class="conf-sub">venda de produto — ajuste pela tela de Estoque</div>
-                {% endif %}
             </div>
         </div>
         {% endfor %}

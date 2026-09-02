@@ -639,7 +639,7 @@ class SalaoViewsTests(TestCase):
             {
                 'action': 'ajustar_lancamento',
                 'ano': 2026, 'mes': 3,
-                'lancamento_id': lancamento.id,
+                'item': f'servico:{lancamento.id}',
                 'valor_bruto': '105,00',
                 'forma_pagamento_id': self.forma_pix.id,
                 'parcelas': 1,
@@ -736,7 +736,7 @@ class SalaoViewsTests(TestCase):
                 'action': 'ajustar_lancamento',
                 'ano': 2026,
                 'mes': 3,
-                'lancamento_id': lancamento.id,
+                'item': f'servico:{lancamento.id}',
                 'valor_bruto': '105,00',
                 'forma_pagamento_id': self.forma_credito.id,
                 'parcelas': 1,
@@ -749,6 +749,85 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(lancamento.taxa_percentual_aplicada, Decimal('3.15'))
         self.assertEqual(lancamento.valor_taxa, Decimal('3.31'))
         self.assertEqual(lancamento.valor_cobrado, Decimal('101.69'))
+
+    def test_conferencia_ajusta_venda_de_produto_sem_mexer_no_estoque(self):
+        """O erro pode estar no produto; ajustar o preço não pode mexer no saldo."""
+        self._login()
+        TaxaFormaPagamentoSalao.objects.update_or_create(
+            forma_pagamento=self.forma_credito, parcelas=3,
+            defaults={'percentual': Decimal('7.19')},
+        )
+        venda = self._create_venda_produto(
+            data=date(2026, 3, 5),
+            valor_bruto=Decimal('89.00'),
+            forma_pagamento=self.forma_credito,
+        )
+        venda.valor_custo_total = Decimal('30.00')
+        venda.quantidade = Decimal('2.000')
+        venda.save()
+        saldo_antes = ProdutoSalao.objects.get(pk=self.produto.pk).saldo_atual
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'ajustar_lancamento',
+                'ano': 2026, 'mes': 3,
+                'item': f'produto:{venda.id}',
+                'valor_bruto': '107,09',
+                'forma_pagamento_id': self.forma_credito.id,
+                'parcelas': 3,
+                'retorno': 'ano=2026&mes=3',
+            },
+        )
+
+        venda.refresh_from_db()
+        self.assertEqual(venda.valor_bruto_venda, Decimal('107.09'))
+        self.assertEqual(venda.taxa_percentual_aplicada, Decimal('7.19'))
+        self.assertEqual(venda.valor_taxa, Decimal('7.70'))
+        self.assertEqual(venda.valor_liquido_venda, Decimal('99.39'))
+        # unitário acompanha o novo preço e o lucro é recalculado sobre o custo
+        self.assertEqual(venda.valor_venda_unitario, Decimal('53.55'))
+        self.assertEqual(venda.lucro_produto, Decimal('69.39'))
+        # quantidade e saldo de estoque intactos
+        self.assertEqual(venda.quantidade, Decimal('2.000'))
+        self.assertEqual(
+            ProdutoSalao.objects.get(pk=self.produto.pk).saldo_atual, saldo_antes,
+        )
+
+    def test_conferencia_mostra_a_diferenca_das_sobras_do_dia(self):
+        """89 + 74 + 383,47 = 546,47 contra uma transação de 564,56."""
+        self._login()
+        csv_564 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '05/03/2026 17:58,Crédito,elo,3,Maquininha,\'-,TX564,Aprovada,'
+            '"564,56","523,92","\'- 40,64",7.19,1 Dia Útil,S12,GARSKE\n'
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 5), valor_bruto=Decimal('383.47'),
+            forma_pagamento=self.forma_credito, taxa_percentual=Decimal('6.12'),
+        )
+        for valor in ('89.00', '74.00'):
+            self._create_venda_produto(
+                data=date(2026, 3, 5), valor_bruto=Decimal(valor),
+                forma_pagamento=self.forma_credito,
+            )
+        self._importar_extrato(csv_564)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        sobras = response.context['dias'][0]['sobras']
+        self.assertEqual(sobras['soma_sistema'], Decimal('546.47'))
+        self.assertEqual(sobras['soma_extrato'], Decimal('564.56'))
+        self.assertEqual(sobras['diferenca'], Decimal('-18.09'))
+
+    def test_conferencia_sem_sobras_dos_dois_lados_nao_mostra_resumo(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 5), valor_bruto=Decimal('80.00'), forma_pagamento=self.forma_pix,
+        )
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        self.assertIsNone(response.context['dias'][0]['sobras'])
 
     def test_conferencia_ajuste_recusa_forma_sem_taxa_cadastrada(self):
         self._login()
@@ -766,7 +845,7 @@ class SalaoViewsTests(TestCase):
             {
                 'action': 'ajustar_lancamento',
                 'ano': 2026, 'mes': 3,
-                'lancamento_id': lancamento.id,
+                'item': f'servico:{lancamento.id}',
                 'valor_bruto': '105,00',
                 'forma_pagamento_id': self.forma_credito.id,
                 'parcelas': 7,
@@ -1115,6 +1194,102 @@ class SalaoViewsTests(TestCase):
                 bruto = _calcular_bruto_com_taxa_repassada(Decimal(alvo), Decimal(percentual))
                 _, liquido = _calcular_liquido_com_taxa(bruto, Decimal(percentual))
                 self.assertEqual(liquido, Decimal(alvo))
+
+    def test_editar_lancamento_volta_para_o_dia_do_lancamento(self):
+        """Editar um lançamento do dia 15 não pode cair no dia de hoje."""
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+
+        response = self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'update_lancamento',
+                'ano': 2026, 'mes': 3,
+                'dia': 1,  # a tela estava em outro dia
+                'lancamento_id': lancamento.id,
+                'data': '2026-03-15',
+                'servico_id': self.servico.id,
+                'valor_bruto': '120,00',
+                'forma_pagamento_id': self.forma_dinheiro.id,
+                'codigo_forma_pagamento': self.forma_dinheiro.codigo,
+                'parcelas': 1,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('dia=15', response['Location'])
+        lancamento.refresh_from_db()
+        self.assertEqual(lancamento.valor_bruto, Decimal('120.00'))
+
+    def test_editar_lancamento_mudando_a_data_segue_o_lancamento(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+
+        response = self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'update_lancamento',
+                'ano': 2026, 'mes': 3, 'dia': 1,
+                'lancamento_id': lancamento.id,
+                'data': '2026-04-20',
+                'servico_id': self.servico.id,
+                'valor_bruto': '100,00',
+                'forma_pagamento_id': self.forma_dinheiro.id,
+                'codigo_forma_pagamento': self.forma_dinheiro.codigo,
+                'parcelas': 1,
+            },
+        )
+        self.assertIn('ano=2026', response['Location'])
+        self.assertIn('mes=4', response['Location'])
+        self.assertIn('dia=20', response['Location'])
+
+    def test_editar_lancamento_com_erro_volta_para_o_dia_de_origem(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+
+        response = self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'update_lancamento',
+                'ano': 2026, 'mes': 3, 'dia': 1,
+                'lancamento_id': lancamento.id,
+                'data': 'data-invalida',
+                'servico_id': self.servico.id,
+                'valor_bruto': '100,00',
+                'codigo_forma_pagamento': self.forma_dinheiro.codigo,
+                'parcelas': 1,
+            },
+        )
+        self.assertIn('dia=15', response['Location'])
+
+    def test_excluir_lancamento_volta_para_o_dia_do_lancamento(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+
+        response = self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'delete_lancamento',
+                'ano': 2026, 'mes': 3, 'dia': 1,
+                'lancamento_id': lancamento.id,
+            },
+        )
+        self.assertIn('dia=15', response['Location'])
 
     def test_lancamento_codigo_invalido_bloqueia_save(self):
         self._login()

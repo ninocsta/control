@@ -965,13 +965,19 @@ def lancamentos(request):
         if action == 'delete_lancamento':
             lancamento_id = request.POST.get('lancamento_id')
             lancamento = get_object_or_404(LancamentoSalao, id=lancamento_id)
+            data_removida = lancamento.data
             lancamento.delete()
             messages.success(request, 'Lançamento removido com sucesso.')
-            return _redirect_lancamentos(ano, mes, dia)
+            return _redirect_lancamentos(
+                data_removida.year, data_removida.month, data_removida.day,
+            )
 
         if action == 'update_lancamento':
             lancamento_id = request.POST.get('lancamento_id')
             lancamento = get_object_or_404(LancamentoSalao, id=lancamento_id)
+            # O campo `dia` da tela pode estar em outro dia (ou no padrão de hoje);
+            # editar um lançamento tem que devolver o usuário para onde ele está.
+            origem = lancamento.data
             permuta = _parse_checkbox(request.POST.get('permuta'))
             sem_comissao = not permuta and _parse_checkbox(request.POST.get('sem_comissao'))
             taxa_repassada = not permuta and _parse_checkbox(request.POST.get('taxa_repassada'))
@@ -982,18 +988,18 @@ def lancamentos(request):
                 data_editada = date(ano_edit, mes_edit, dia_edit)
             except (TypeError, ValueError, AttributeError):
                 messages.error(request, 'Data inválida para edição do lançamento.')
-                return _redirect_lancamentos(ano, mes, dia)
+                return _redirect_lancamentos(origem.year, origem.month, origem.day)
 
             servico_id = request.POST.get('servico_id')
             servico = ServicoSalao.objects.filter(id=servico_id, ativo=True).first()
             if not servico:
                 messages.error(request, 'Selecione um serviço ativo válido para edição.')
-                return _redirect_lancamentos(ano, mes, dia)
+                return _redirect_lancamentos(origem.year, origem.month, origem.day)
 
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             if valor_bruto is None or valor_bruto < Decimal('0.00'):
                 messages.error(request, 'Informe um valor bruto válido para edição.')
-                return _redirect_lancamentos(ano, mes, dia)
+                return _redirect_lancamentos(origem.year, origem.month, origem.day)
 
             if permuta:
                 forma_pagamento = _forma_pagamento_nao_informado_ativa()
@@ -1002,7 +1008,7 @@ def lancamentos(request):
                         request,
                         'Forma de pagamento "0 - Não informado" não está ativa. Ajuste em Pagamentos.',
                     )
-                    return _redirect_lancamentos(ano, mes, dia)
+                    return _redirect_lancamentos(origem.year, origem.month, origem.day)
                 parcelas = 1
                 taxa_percentual = Decimal('0.00')
                 valor_taxa = Decimal('0.00')
@@ -1012,7 +1018,7 @@ def lancamentos(request):
                 forma_pagamento = FormaPagamentoSalao.objects.filter(id=forma_pagamento_id, ativo=True).first()
                 if not forma_pagamento:
                     messages.error(request, 'Selecione uma forma de pagamento ativa válida.')
-                    return _redirect_lancamentos(ano, mes, dia)
+                    return _redirect_lancamentos(origem.year, origem.month, origem.day)
 
                 parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
                 if not forma_pagamento.aceita_parcelamento:
@@ -1024,7 +1030,7 @@ def lancamentos(request):
                 ).first()
                 if not taxa:
                     messages.error(request, 'Taxa não cadastrada para essa forma de pagamento e parcela.')
-                    return _redirect_lancamentos(ano, mes, dia)
+                    return _redirect_lancamentos(origem.year, origem.month, origem.day)
                 taxa_percentual = taxa.percentual
                 if taxa_repassada:
                     # O valor digitado é o que o salão quer receber; a taxa vai por cima.
@@ -1064,7 +1070,10 @@ def lancamentos(request):
                 messages.success(request, 'Lançamento sem comissão atualizado com sucesso.')
             else:
                 messages.success(request, 'Lançamento atualizado com sucesso.')
-            return _redirect_lancamentos(ano, mes, dia)
+            # Se a data mudou na edição, o lançamento está no destino novo.
+            return _redirect_lancamentos(
+                data_editada.year, data_editada.month, data_editada.day,
+            )
 
     resumo_dia, resumo_mes, inicio_mes, fim_mes, data_fixa = _resumo_lancamentos_por_competencia(ano, mes, dia)
 
@@ -2399,8 +2408,17 @@ def conferencia(request):
             return _redirect_conferencia(ano, mes, retorno=retorno)
 
         if action == 'ajustar_lancamento':
-            lancamento = get_object_or_404(LancamentoSalao, pk=request.POST.get('lancamento_id'))
-            dia_origem = lancamento.data.day
+            chave = request.POST.get('item') or ''
+            tipo, _, bruto_id = chave.partition(':')
+            modelo = {
+                ItemConferencia.SERVICO: LancamentoSalao,
+                ItemConferencia.PRODUTO: MovimentoEstoqueSalao,
+            }.get(tipo)
+            if modelo is None or not bruto_id.isdigit():
+                messages.error(request, 'Item inválido.')
+                return _redirect_conferencia(ano, mes, retorno=retorno)
+            origem = get_object_or_404(modelo, pk=int(bruto_id))
+
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             if valor_bruto is None or valor_bruto < Decimal('0.00'):
                 messages.error(request, 'Informe um valor bruto válido.')
@@ -2430,24 +2448,40 @@ def conferencia(request):
                 return _redirect_conferencia(ano, mes, retorno=retorno)
 
             valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa.percentual)
-            lancamento.valor_bruto = valor_bruto
-            lancamento.forma_pagamento = forma_pagamento
-            lancamento.parcelas = parcelas
-            lancamento.taxa_percentual_aplicada = taxa.percentual
-            lancamento.valor_taxa = valor_taxa
-            lancamento.valor_cobrado = valor_liquido
-            lancamento.save(update_fields=[
-                'valor_bruto',
-                'forma_pagamento',
-                'parcelas',
-                'taxa_percentual_aplicada',
-                'valor_taxa',
-                'valor_cobrado',
-                'atualizado_em',
+            origem.forma_pagamento = forma_pagamento
+            origem.parcelas = parcelas
+            origem.taxa_percentual_aplicada = taxa.percentual
+            origem.valor_taxa = valor_taxa
+
+            if tipo == ItemConferencia.SERVICO:
+                origem.valor_bruto = valor_bruto
+                origem.valor_cobrado = valor_liquido
+                campos = ['valor_bruto', 'valor_cobrado', 'atualizado_em']
+            else:
+                # Só o preço de venda muda: quantidade e custo ficam de fora para
+                # não mexer no saldo nem no custo médio do estoque.
+                origem.valor_bruto_venda = valor_bruto
+                origem.valor_liquido_venda = valor_liquido
+                origem.valor_venda_unitario = (
+                    (valor_bruto / origem.quantidade).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP,
+                    ) if origem.quantidade else valor_bruto
+                )
+                origem.lucro_produto = _quantize_money(valor_liquido - origem.valor_custo_total)
+                campos = [
+                    'valor_bruto_venda',
+                    'valor_liquido_venda',
+                    'valor_venda_unitario',
+                    'lucro_produto',
+                ]
+
+            origem.save(update_fields=campos + [
+                'forma_pagamento', 'parcelas', 'taxa_percentual_aplicada', 'valor_taxa',
             ])
+            rotulo = 'Lançamento' if tipo == ItemConferencia.SERVICO else 'Venda de produto'
             messages.success(
                 request,
-                f'Lançamento ajustado para R$ {valor_bruto} em {forma_pagamento.nome} '
+                f'{rotulo} ajustado para R$ {valor_bruto} em {forma_pagamento.nome} '
                 f'{parcelas}x. Líquido: R$ {valor_liquido}.',
             )
             return _redirect_conferencia(ano, mes, retorno=retorno)
@@ -2630,9 +2664,19 @@ def conferencia(request):
         if somente_pendentes and conferidos_dia == len(do_dia) and not sem_par_extrato:
             continue
 
+        # Quando sobra dos dois lados, o que resolve é ver o buraco de uma vez:
+        # 89 + 74 + 383,47 = 546,47 contra uma transação de 564,56.
+        soma_pendentes = sum((i.valor_bruto for i in sem_par_sistema), Decimal('0.00'))
+        soma_disponiveis = sum((Decimal(t['bruto']) for t in sem_par_extrato), Decimal('0.00'))
+
         dias_context.append({
             'dia': dia,
             'data': date(ano, mes, dia),
+            'sobras': {
+                'soma_sistema': soma_pendentes,
+                'soma_extrato': soma_disponiveis,
+                'diferenca': (soma_pendentes - soma_disponiveis).quantize(Decimal('0.01')),
+            } if sem_par_sistema and sem_par_extrato else None,
             'pares': sorted(resultado['pares'], key=lambda p: p['lancamentos'][0].data),
             'sem_par_sistema': sem_par_sistema,
             'sem_par_extrato': sem_par_extrato,
