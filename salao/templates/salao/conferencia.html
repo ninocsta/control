@@ -225,6 +225,7 @@
             <form method="post" class="d-inline">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="conferir_dia">
+                <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
                 <input type="hidden" name="ano" value="{{ ano }}">
                 <input type="hidden" name="mes" value="{{ mes }}">
                 <input type="hidden" name="dia" value="{{ item.dia }}">
@@ -233,6 +234,7 @@
             <form method="post" class="d-inline">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="desconferir_dia">
+                <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
                 <input type="hidden" name="ano" value="{{ ano }}">
                 <input type="hidden" name="mes" value="{{ mes }}">
                 <input type="hidden" name="dia" value="{{ item.dia }}">

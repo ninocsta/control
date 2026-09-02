@@ -161,10 +161,11 @@ def _redirect_dashboard(ano, mes):
 
 
 def _redirect_conferencia(ano, mes, dia=None, retorno=''):
-    """Volta para a conferência.
+    """Volta para a conferência, na tela em que o usuário estava.
 
-    `retorno` é a query string em que o usuário estava: marcar uma transação
-    como fora do salão não pode jogá-lo num filtro de dia que ele não pediu.
+    `retorno` é a query string de origem. Conferir um dia inteiro ou marcar uma
+    transação como fora do salão não pode ligar um filtro de dia que o usuário
+    não pediu — mas se ele já estava filtrando o dia 1, continua filtrado.
     """
     if retorno:
         return redirect(f"{reverse('salao:conferencia')}?{retorno}")
@@ -2403,7 +2404,7 @@ def conferencia(request):
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             if valor_bruto is None or valor_bruto < Decimal('0.00'):
                 messages.error(request, 'Informe um valor bruto válido.')
-                return _redirect_conferencia(ano, mes, dia_origem, retorno)
+                return _redirect_conferencia(ano, mes, retorno=retorno)
 
             forma_pagamento = FormaPagamentoSalao.objects.filter(
                 pk=request.POST.get('forma_pagamento_id'),
@@ -2411,7 +2412,7 @@ def conferencia(request):
             ).first()
             if not forma_pagamento:
                 messages.error(request, 'Selecione uma forma de pagamento ativa.')
-                return _redirect_conferencia(ano, mes, dia_origem, retorno)
+                return _redirect_conferencia(ano, mes, retorno=retorno)
 
             parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
             if not forma_pagamento.aceita_parcelamento:
@@ -2426,7 +2427,7 @@ def conferencia(request):
                     request,
                     f'Taxa não cadastrada para {forma_pagamento.nome} em {parcelas}x.',
                 )
-                return _redirect_conferencia(ano, mes, dia_origem, retorno)
+                return _redirect_conferencia(ano, mes, retorno=retorno)
 
             valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa.percentual)
             lancamento.valor_bruto = valor_bruto
@@ -2449,7 +2450,7 @@ def conferencia(request):
                 f'Lançamento ajustado para R$ {valor_bruto} em {forma_pagamento.nome} '
                 f'{parcelas}x. Líquido: R$ {valor_liquido}.',
             )
-            return _redirect_conferencia(ano, mes, dia_origem, retorno)
+            return _redirect_conferencia(ano, mes, retorno=retorno)
 
         if action in {'conferir_dia', 'desconferir_dia'}:
             dia = _parse_day(request, ano, mes)
@@ -2473,7 +2474,7 @@ def conferencia(request):
             ).update(**valores)
             verbo = 'conferidos' if marcar else 'desmarcados'
             messages.success(request, f'{atualizados} item(ns) {verbo} no dia {dia:02d}/{mes:02d}.')
-            return _redirect_conferencia(ano, mes, dia, retorno)
+            return _redirect_conferencia(ano, mes, retorno=retorno)
 
         if action == 'importar_extrato':
             arquivo = request.FILES.get('extrato')

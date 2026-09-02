@@ -590,6 +590,65 @@ class SalaoViewsTests(TestCase):
             LancamentoSalao.objects.filter(data=date(2026, 3, 15), conferido=True).count(), 1,
         )
 
+    def test_conferencia_conferir_dia_nao_liga_filtro_de_dia(self):
+        """Conferir/desmarcar um dia mantém a tela em que o usuário estava."""
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('80.00'), forma_pagamento=self.forma_pix,
+        )
+
+        for acao in ('conferir_dia', 'desconferir_dia'):
+            with self.subTest(acao=acao):
+                response = self.client.post(
+                    reverse('salao:conferencia'),
+                    {
+                        'action': acao,
+                        'ano': 2026, 'mes': 3, 'dia': 15,
+                        'retorno': 'ano=2026&mes=3',
+                    },
+                )
+                self.assertEqual(response.status_code, 302)
+                self.assertNotIn('dia=', response['Location'])
+
+    def test_conferencia_conferir_dia_preserva_o_filtro_que_o_usuario_pediu(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 1), valor_bruto=Decimal('80.00'), forma_pagamento=self.forma_pix,
+        )
+
+        response = self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'conferir_dia',
+                'ano': 2026, 'mes': 3, 'dia': 1,
+                'retorno': 'ano=2026&mes=3&dia=1&pendentes=1',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('dia=1', response['Location'])
+        self.assertIn('pendentes=1', response['Location'])
+
+    def test_conferencia_ajustar_lancamento_nao_liga_filtro_de_dia(self):
+        self._login()
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('100.00'), forma_pagamento=self.forma_pix,
+        )
+
+        response = self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'ajustar_lancamento',
+                'ano': 2026, 'mes': 3,
+                'lancamento_id': lancamento.id,
+                'valor_bruto': '105,00',
+                'forma_pagamento_id': self.forma_pix.id,
+                'parcelas': 1,
+                'retorno': 'ano=2026&mes=3',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn('dia=', response['Location'])
+
     def test_conferencia_ignorar_transacao_volta_para_a_mesma_tela(self):
         self._login()
         self._importar_extrato()
