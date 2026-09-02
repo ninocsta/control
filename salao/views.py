@@ -160,7 +160,14 @@ def _redirect_dashboard(ano, mes):
     return redirect(f"{reverse('salao:dashboard')}?ano={ano}&mes={mes}")
 
 
-def _redirect_conferencia(ano, mes, dia=None):
+def _redirect_conferencia(ano, mes, dia=None, retorno=''):
+    """Volta para a conferência.
+
+    `retorno` é a query string em que o usuário estava: marcar uma transação
+    como fora do salão não pode jogá-lo num filtro de dia que ele não pediu.
+    """
+    if retorno:
+        return redirect(f"{reverse('salao:conferencia')}?{retorno}")
     url = f"{reverse('salao:conferencia')}?ano={ano}&mes={mes}"
     if dia:
         url += f'&dia={dia}'
@@ -542,6 +549,77 @@ TOLERANCIA_TAXA_PP = Decimal('0.50')
 MAX_LANCAMENTOS_POR_TRANSACAO = 3
 
 
+class ItemConferencia:
+    """Um serviço ou uma venda de produto, com a mesma cara para o pareamento.
+
+    Os dois entram no mesmo extrato da adquirente, então a conferência precisa
+    olhar para os dois. Guardam o valor em campos diferentes
+    (`valor_bruto` x `valor_bruto_venda`), e é só isso que esta classe resolve.
+    """
+
+    SERVICO = 'servico'
+    PRODUTO = 'produto'
+
+    def __init__(self, origem, tipo):
+        self.origem = origem
+        self.tipo = tipo
+        self.id = origem.id
+        self.chave = f'{tipo}:{origem.id}'
+        self.data = origem.data
+        self.forma_pagamento = origem.forma_pagamento
+        self.parcelas = origem.parcelas
+        self.conferido = origem.conferido
+        self.taxa_percentual_aplicada = origem.taxa_percentual_aplicada
+        if tipo == self.SERVICO:
+            self.valor_bruto = origem.valor_bruto
+            self.descricao = f'{origem.servico.codigo} - {origem.servico.nome}'
+            self.permuta = origem.permuta
+            self.sem_comissao = origem.sem_comissao
+            self.ajustavel = True
+        else:
+            self.valor_bruto = origem.valor_bruto_venda
+            quantidade = origem.quantidade.normalize()
+            self.descricao = f'{origem.produto.codigo} - {origem.produto.nome} ({quantidade}x)'
+            self.permuta = False
+            self.sem_comissao = False
+            self.ajustavel = False
+
+
+def _itens_conferencia_do_mes(ano, mes):
+    """Serviços e vendas de produto do mês, na ordem em que aconteceram."""
+    servicos = [
+        ItemConferencia(lancamento, ItemConferencia.SERVICO)
+        for lancamento in LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
+        .select_related('servico', 'forma_pagamento')
+    ]
+    produtos = [
+        ItemConferencia(movimento, ItemConferencia.PRODUTO)
+        for movimento in MovimentoEstoqueSalao.objects.filter(
+            data__year=ano,
+            data__month=mes,
+            tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+            motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
+        ).select_related('produto', 'forma_pagamento')
+    ]
+    return sorted(servicos + produtos, key=lambda item: (item.data, item.tipo, item.id))
+
+
+def _marcar_conferido(chave, conferido):
+    """Marca um item da conferência, seja ele serviço ou venda de produto."""
+    tipo, _, bruto_id = (chave or '').partition(':')
+    modelo = {
+        ItemConferencia.SERVICO: LancamentoSalao,
+        ItemConferencia.PRODUTO: MovimentoEstoqueSalao,
+    }.get(tipo)
+    if modelo is None or not bruto_id.isdigit():
+        return None
+    origem = get_object_or_404(modelo, pk=int(bruto_id))
+    origem.conferido = conferido
+    origem.conferido_em = timezone.now() if conferido else None
+    origem.save(update_fields=['conferido', 'conferido_em'])
+    return origem
+
+
 def _meio_do_lancamento(lancamento):
     return _normalizar_texto(
         lancamento.forma_pagamento.nome if lancamento.forma_pagamento else ''
@@ -564,6 +642,7 @@ def _montar_par(lancamentos, transacao, criterio, diferenca):
         'transacao': transacao,
         'criterio': criterio,
         'combinado': len(lancamentos) > 1,
+        'entre_dias': False,
         'total_lancado': sum((l.valor_bruto for l in lancamentos), Decimal('0.00')),
         'todos_conferidos': all(l.conferido for l in lancamentos),
         'diferenca_valor': diferenca.quantize(Decimal('0.01')),
@@ -639,6 +718,60 @@ def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
 
     pares.sort(key=lambda par: par['lancamentos'][0].id)
     return pares, pendentes, disponiveis
+
+
+def _parear_entre_dias(pendentes_por_dia, disponiveis_por_dia, tolerancia, janela_dias=7):
+    """Fecha transações cujo pagamento não caiu no mesmo dia do atendimento.
+
+    Um Pix de R$ 200,00 no dia 07 pode cobrir um atendimento do dia 01 e outro
+    do dia 07. Roda só sobre o que sobrou do pareamento diário, exige o mesmo
+    meio de pagamento e limita a distância entre as datas, porque cruzar dias
+    aumenta muito a chance de casar duas coisas parecidas por acaso.
+
+    Devolve os pares encontrados; as listas recebidas são esvaziadas do que foi
+    consumido.
+    """
+    pares = []
+    pendentes = [item for itens in pendentes_por_dia.values() for item in itens]
+
+    for dia_transacao in sorted(disponiveis_por_dia):
+        for transacao in list(disponiveis_por_dia[dia_transacao]):
+            meio = _normalizar_texto(transacao['meio'])
+            candidatos = [
+                item for item in pendentes
+                if _meio_do_lancamento(item) == meio
+                and abs(item.data.day - dia_transacao) <= janela_dias
+            ]
+            achou = None
+            for criterio in ('bruto', 'liquido'):
+                alvo = Decimal(transacao[criterio])
+                for tamanho in range(2, MAX_LANCAMENTOS_POR_TRANSACAO + 1):
+                    if len(candidatos) < tamanho:
+                        break
+                    for combinacao in combinations(candidatos, tamanho):
+                        if len({item.data for item in combinacao}) < 2:
+                            continue  # mesmo dia já foi tentado no pareamento diário
+                        diferenca = sum(
+                            (item.valor_bruto for item in combinacao), Decimal('0.00')
+                        ) - alvo
+                        if abs(diferenca) <= tolerancia and (
+                            achou is None or abs(diferenca) < abs(achou[2])
+                        ):
+                            achou = (list(combinacao), criterio, diferenca)
+            if achou is None:
+                continue
+
+            combinacao, criterio, diferenca = achou
+            disponiveis_por_dia[dia_transacao].remove(transacao)
+            for item in combinacao:
+                pendentes.remove(item)
+                pendentes_por_dia[item.data.day].remove(item)
+            par = _montar_par(combinacao, transacao, criterio, diferenca)
+            par['entre_dias'] = True
+            par['dia_transacao'] = dia_transacao
+            pares.append(par)
+
+    return pares
 
 
 def _resumo_lancamentos_por_competencia(ano, mes, dia):
@@ -2213,15 +2346,16 @@ def conferencia(request):
 
     if request.method == 'POST':
         action = request.POST.get('action')
+        retorno = (request.POST.get('retorno') or '').strip()
 
         if action == 'toggle_conferido':
-            lancamento = get_object_or_404(LancamentoSalao, pk=request.POST.get('lancamento_id'))
-            lancamento.conferido = _parse_checkbox(request.POST.get('conferido'))
-            lancamento.conferido_em = timezone.now() if lancamento.conferido else None
-            lancamento.save(update_fields=['conferido', 'conferido_em', 'atualizado_em'])
+            conferido = _parse_checkbox(request.POST.get('conferido'))
+            origem = _marcar_conferido(request.POST.get('item'), conferido)
+            if origem is None:
+                return JsonResponse({'ok': False}, status=400)
             if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return JsonResponse({'ok': True, 'conferido': lancamento.conferido})
-            return _redirect_conferencia(ano, mes, request.POST.get('dia'))
+                return JsonResponse({'ok': True, 'conferido': origem.conferido})
+            return _redirect_conferencia(ano, mes, retorno=retorno)
 
         if action == 'ajustar_lancamento':
             lancamento = get_object_or_404(LancamentoSalao, pk=request.POST.get('lancamento_id'))
@@ -2229,7 +2363,7 @@ def conferencia(request):
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             if valor_bruto is None or valor_bruto < Decimal('0.00'):
                 messages.error(request, 'Informe um valor bruto válido.')
-                return _redirect_conferencia(ano, mes, dia_origem)
+                return _redirect_conferencia(ano, mes, dia_origem, retorno)
 
             forma_pagamento = FormaPagamentoSalao.objects.filter(
                 pk=request.POST.get('forma_pagamento_id'),
@@ -2237,7 +2371,7 @@ def conferencia(request):
             ).first()
             if not forma_pagamento:
                 messages.error(request, 'Selecione uma forma de pagamento ativa.')
-                return _redirect_conferencia(ano, mes, dia_origem)
+                return _redirect_conferencia(ano, mes, dia_origem, retorno)
 
             parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
             if not forma_pagamento.aceita_parcelamento:
@@ -2252,7 +2386,7 @@ def conferencia(request):
                     request,
                     f'Taxa não cadastrada para {forma_pagamento.nome} em {parcelas}x.',
                 )
-                return _redirect_conferencia(ano, mes, dia_origem)
+                return _redirect_conferencia(ano, mes, dia_origem, retorno)
 
             valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa.percentual)
             lancamento.valor_bruto = valor_bruto
@@ -2275,7 +2409,7 @@ def conferencia(request):
                 f'Lançamento ajustado para R$ {valor_bruto} em {forma_pagamento.nome} '
                 f'{parcelas}x. Líquido: R$ {valor_liquido}.',
             )
-            return _redirect_conferencia(ano, mes, dia_origem)
+            return _redirect_conferencia(ano, mes, dia_origem, retorno)
 
         if action in {'conferir_dia', 'desconferir_dia'}:
             dia = _parse_day(request, ano, mes)
@@ -2283,16 +2417,23 @@ def conferencia(request):
                 messages.error(request, 'Dia inválido.')
                 return _redirect_conferencia(ano, mes, None)
             marcar = action == 'conferir_dia'
+            valores = {
+                'conferido': marcar,
+                'conferido_em': timezone.now() if marcar else None,
+            }
+            data_alvo = date(ano, mes, dia)
             atualizados = LancamentoSalao.objects.filter(
-                data=date(ano, mes, dia),
+                data=data_alvo, conferido=not marcar,
+            ).update(**valores)
+            atualizados += MovimentoEstoqueSalao.objects.filter(
+                data=data_alvo,
+                tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+                motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
                 conferido=not marcar,
-            ).update(
-                conferido=marcar,
-                conferido_em=timezone.now() if marcar else None,
-            )
+            ).update(**valores)
             verbo = 'conferidos' if marcar else 'desmarcados'
-            messages.success(request, f'{atualizados} lançamento(s) {verbo} no dia {dia:02d}/{mes:02d}.')
-            return _redirect_conferencia(ano, mes, dia)
+            messages.success(request, f'{atualizados} item(ns) {verbo} no dia {dia:02d}/{mes:02d}.')
+            return _redirect_conferencia(ano, mes, dia, retorno)
 
         if action == 'importar_extrato':
             arquivo = request.FILES.get('extrato')
@@ -2334,14 +2475,14 @@ def conferencia(request):
                     defaults={'referencia': (request.POST.get('referencia') or '')[:200]},
                 )
                 messages.success(request, 'Transação marcada como fora do salão.')
-            return _redirect_conferencia(ano, mes, request.POST.get('dia'))
+            return _redirect_conferencia(ano, mes, retorno=retorno)
 
         if action == 'reativar_transacao':
             TransacaoIgnoradaSalao.objects.filter(
                 identificador=(request.POST.get('identificador') or '').strip()
             ).delete()
             messages.success(request, 'Transação voltou para a conferência.')
-            return _redirect_conferencia(ano, mes, request.POST.get('dia'))
+            return _redirect_conferencia(ano, mes, retorno=retorno)
 
         if action == 'limpar_extrato':
             request.session.pop(CONFERENCIA_SESSION_KEY, None)
@@ -2377,21 +2518,43 @@ def conferencia(request):
         else:
             transacoes_recusadas.append(transacao)
 
-    lancamentos_mes = list(
-        LancamentoSalao.objects.filter(data__year=ano, data__month=mes)
-        .select_related('servico', 'forma_pagamento')
-        .order_by('data', 'id')
-    )
+    # Serviços e vendas de produto caem no mesmo extrato, então conferem juntos.
+    itens_mes = _itens_conferencia_do_mes(ano, mes)
 
     transacoes_por_dia = defaultdict(list)
     for transacao in transacoes_aprovadas:
         transacoes_por_dia[transacao['dia']].append(transacao)
 
-    lancamentos_por_dia = defaultdict(list)
-    for lancamento in lancamentos_mes:
-        lancamentos_por_dia[lancamento.data.day].append(lancamento)
+    itens_por_dia = defaultdict(list)
+    for item in itens_mes:
+        itens_por_dia[item.data.day].append(item)
 
-    dias = sorted(set(lancamentos_por_dia) | set(transacoes_por_dia))
+    # Passada 1: cada dia contra as transações do próprio dia.
+    resultado_por_dia = {}
+    pendentes_por_dia = defaultdict(list)
+    disponiveis_por_dia = defaultdict(list)
+    for dia in sorted(set(itens_por_dia) | set(transacoes_por_dia)):
+        do_dia = itens_por_dia.get(dia, [])
+        # Permuta não passa pelo banco: fica de fora do pareamento, mas continua visível.
+        conciliaveis = [i for i in do_dia if not i.permuta]
+        pares, sem_par_sistema, sem_par_extrato = _parear_dia(
+            conciliaveis,
+            transacoes_por_dia.get(dia, []),
+            tolerancia=tolerancia,
+        )
+        resultado_por_dia[dia] = {
+            'pares': pares,
+            'permutas': [i for i in do_dia if i.permuta],
+            'conciliaveis': conciliaveis,
+        }
+        pendentes_por_dia[dia] = sem_par_sistema
+        disponiveis_por_dia[dia] = sem_par_extrato
+
+    # Passada 2: sobras que só fecham cruzando dias (pagamento junto de dois atendimentos).
+    for par in _parear_entre_dias(pendentes_por_dia, disponiveis_por_dia, tolerancia):
+        resultado_por_dia[par['dia_transacao']]['pares'].append(par)
+
+    dias = sorted(resultado_por_dia)
     if dia_filtro is not None:
         dias = [d for d in dias if d == dia_filtro]
 
@@ -2399,32 +2562,27 @@ def conferencia(request):
     total_sistema = Decimal('0.00')
     total_extrato = Decimal('0.00')
     total_conferidos = 0
-    total_lancamentos = 0
+    total_itens = 0
     total_sem_par_sistema = 0
     total_sem_par_extrato = 0
 
     for dia in dias:
-        do_dia = lancamentos_por_dia.get(dia, [])
-        # Permuta não passa pelo banco: fica de fora do pareamento, mas continua visível.
-        conciliaveis = [l for l in do_dia if not l.permuta]
-        permutas = [l for l in do_dia if l.permuta]
-        pares, sem_par_sistema, sem_par_extrato = _parear_dia(
-            conciliaveis,
-            transacoes_por_dia.get(dia, []),
-            tolerancia=tolerancia,
-        )
+        resultado = resultado_por_dia[dia]
+        do_dia = itens_por_dia.get(dia, [])
+        sem_par_sistema = pendentes_por_dia[dia]
+        sem_par_extrato = disponiveis_por_dia[dia]
 
-        soma_sistema = sum((l.valor_bruto for l in conciliaveis), Decimal('0.00'))
+        soma_sistema = sum((i.valor_bruto for i in resultado['conciliaveis']), Decimal('0.00'))
         soma_extrato = sum(
             (Decimal(t['bruto']) for t in transacoes_por_dia.get(dia, [])),
             Decimal('0.00'),
         )
-        conferidos_dia = sum(1 for l in do_dia if l.conferido)
+        conferidos_dia = sum(1 for i in do_dia if i.conferido)
 
         total_sistema += soma_sistema
         total_extrato += soma_extrato
         total_conferidos += conferidos_dia
-        total_lancamentos += len(do_dia)
+        total_itens += len(do_dia)
         total_sem_par_sistema += len(sem_par_sistema)
         total_sem_par_extrato += len(sem_par_extrato)
 
@@ -2434,10 +2592,10 @@ def conferencia(request):
         dias_context.append({
             'dia': dia,
             'data': date(ano, mes, dia),
-            'pares': pares,
+            'pares': sorted(resultado['pares'], key=lambda p: p['lancamentos'][0].data),
             'sem_par_sistema': sem_par_sistema,
             'sem_par_extrato': sem_par_extrato,
-            'permutas': permutas,
+            'permutas': resultado['permutas'],
             'quantidade': len(do_dia),
             'conferidos': conferidos_dia,
             'pendentes': len(do_dia) - conferidos_dia,
@@ -2471,9 +2629,9 @@ def conferencia(request):
             'total_sistema': total_sistema,
             'total_extrato': total_extrato,
             'diferenca': (total_sistema - total_extrato).quantize(Decimal('0.01')),
-            'lancamentos': total_lancamentos,
+            'lancamentos': total_itens,
             'conferidos': total_conferidos,
-            'pendentes': total_lancamentos - total_conferidos,
+            'pendentes': total_itens - total_conferidos,
             'sem_par_sistema': total_sem_par_sistema,
             'sem_par_extrato': total_sem_par_extrato,
         },

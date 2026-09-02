@@ -433,6 +433,176 @@ class SalaoViewsTests(TestCase):
         marco = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
         self.assertEqual(len(marco.context['dias'][0]['pares']), 2)
 
+    def _create_venda_produto(self, *, data, valor_bruto, forma_pagamento=None, taxa=Decimal('0.00')):
+        valor_taxa = (valor_bruto * taxa / Decimal('100.00')).quantize(
+            Decimal('0.01'), rounding=ROUND_HALF_UP,
+        )
+        return MovimentoEstoqueSalao.objects.create(
+            data=data,
+            produto=self.produto,
+            tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+            motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
+            quantidade=Decimal('1.000'),
+            valor_bruto_venda=valor_bruto,
+            taxa_percentual_aplicada=taxa,
+            valor_taxa=valor_taxa,
+            valor_liquido_venda=valor_bruto - valor_taxa,
+            forma_pagamento=forma_pagamento or self.forma_pix,
+        )
+
+    def test_conferencia_inclui_venda_de_produto(self):
+        """Os R$ 105,00 do extrato eram venda de produto, não serviço."""
+        self._login()
+        csv_105 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '15/03/2026 10:40,Pix,Pix,À Vista,Conta Inteligente,\'-,TX105,Aprovada,'
+            '"105,00","105,00","0,00",0,Outro,S11,NEIVA\n'
+        )
+        venda = self._create_venda_produto(data=date(2026, 3, 15), valor_bruto=Decimal('105.00'))
+        self._importar_extrato(csv_105)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual(len(dia['pares']), 1)
+        item = dia['pares'][0]['lancamentos'][0]
+        self.assertEqual(item.tipo, 'produto')
+        self.assertEqual(item.chave, f'produto:{venda.id}')
+        self.assertFalse(item.ajustavel)
+
+    def test_conferencia_soma_servico_com_produto_na_mesma_transacao(self):
+        """R$ 564,56 = progressiva de R$ 383,47 mais produtos."""
+        self._login()
+        csv_564 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '15/03/2026 17:58,Crédito,visa,3,Maquininha,\'-,TX564,Aprovada,'
+            '"564,56","524,00","\'- 40,56",7.19,1 Dia Útil,S12,GARSKE\n'
+        )
+        servico = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('383.47'),
+            forma_pagamento=self.forma_credito,
+            taxa_percentual=Decimal('6.12'),
+        )
+        venda = self._create_venda_produto(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('181.09'),
+            forma_pagamento=self.forma_credito,
+        )
+        self._importar_extrato(csv_564)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        par = response.context['dias'][0]['pares'][0]
+        self.assertTrue(par['combinado'])
+        self.assertEqual(
+            {i.chave for i in par['lancamentos']},
+            {f'servico:{servico.id}', f'produto:{venda.id}'},
+        )
+        self.assertEqual(par['total_lancado'], Decimal('564.56'))
+
+    def test_conferencia_concilia_pagamento_que_cobre_dias_diferentes(self):
+        """Pix de R$ 200,00 no dia 07 cobrindo atendimentos do dia 01 e do dia 07."""
+        self._login()
+        csv_200 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '07/03/2026 07:16,Pix,Pix,À Vista,Maquininha,\'-,TX200,Aprovada,'
+            '"200,00","200,00","0,00",0,Outro,S13,Ana Luisa\n'
+        )
+        dia01 = self._create_lancamento(
+            data=date(2026, 3, 1), valor_bruto=Decimal('100.00'), forma_pagamento=self.forma_pix,
+        )
+        dia07 = self._create_lancamento(
+            data=date(2026, 3, 7), valor_bruto=Decimal('100.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(csv_200)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dias = {d['dia']: d for d in response.context['dias']}
+        # o par aparece no dia em que o dinheiro entrou
+        par = dias[7]['pares'][0]
+        self.assertTrue(par['entre_dias'])
+        self.assertEqual(
+            {i.id for i in par['lancamentos']}, {dia01.id, dia07.id},
+        )
+        self.assertEqual(dias[1]['sem_par_sistema'], [])
+        self.assertEqual(dias[7]['sem_par_extrato'], [])
+
+    def test_conferencia_nao_cruza_dias_alem_da_janela(self):
+        self._login()
+        csv_200 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '25/03/2026 07:16,Pix,Pix,À Vista,Maquininha,\'-,TX200,Aprovada,'
+            '"200,00","200,00","0,00",0,Outro,S13,Ana\n'
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 1), valor_bruto=Decimal('100.00'), forma_pagamento=self.forma_pix,
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 25), valor_bruto=Decimal('100.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(csv_200)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dias = {d['dia']: d for d in response.context['dias']}
+        self.assertEqual(dias[25]['pares'], [])
+        self.assertEqual(len(dias[25]['sem_par_extrato']), 1)
+
+    def test_conferencia_marca_venda_de_produto_como_conferida(self):
+        self._login()
+        venda = self._create_venda_produto(data=date(2026, 3, 15), valor_bruto=Decimal('105.00'))
+
+        response = self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
+             'item': f'produto:{venda.id}', 'conferido': 'on'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(response.json()['conferido'], True)
+        venda.refresh_from_db()
+        self.assertTrue(venda.conferido)
+        self.assertIsNotNone(venda.conferido_em)
+
+    def test_conferencia_conferir_dia_pega_servico_e_produto(self):
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('80.00'), forma_pagamento=self.forma_pix,
+        )
+        venda = self._create_venda_produto(data=date(2026, 3, 15), valor_bruto=Decimal('105.00'))
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'conferir_dia', 'ano': 2026, 'mes': 3, 'dia': 15},
+        )
+        venda.refresh_from_db()
+        self.assertTrue(venda.conferido)
+        self.assertEqual(
+            LancamentoSalao.objects.filter(data=date(2026, 3, 15), conferido=True).count(), 1,
+        )
+
+    def test_conferencia_ignorar_transacao_volta_para_a_mesma_tela(self):
+        self._login()
+        self._importar_extrato()
+
+        response = self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'ignorar_transacao',
+                'ano': 2026, 'mes': 3,
+                'identificador': 'TX003',
+                'retorno': 'ano=2026&mes=3',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn('dia=', response['Location'])
+        self.assertIn('ano=2026&mes=3', response['Location'])
+
     def test_conferencia_soma_lancamentos_para_fechar_uma_transacao(self):
         """Cliente paga R$ 290,00 numa passada só, cobrindo dois serviços."""
         self._login()
@@ -612,7 +782,7 @@ class SalaoViewsTests(TestCase):
         marcar = self.client.post(
             reverse('salao:conferencia'),
             {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
-             'lancamento_id': lancamento.id, 'conferido': 'on'},
+             'item': f'servico:{lancamento.id}', 'conferido': 'on'},
             HTTP_X_REQUESTED_WITH='XMLHttpRequest',
         )
         self.assertEqual(marcar.json()['conferido'], True)
@@ -623,7 +793,7 @@ class SalaoViewsTests(TestCase):
         self.client.post(
             reverse('salao:conferencia'),
             {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
-             'lancamento_id': lancamento.id, 'conferido': ''},
+             'item': f'servico:{lancamento.id}', 'conferido': ''},
             HTTP_X_REQUESTED_WITH='XMLHttpRequest',
         )
         lancamento.refresh_from_db()

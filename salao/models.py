@@ -446,6 +446,8 @@ class MovimentoEstoqueSalao(models.Model):
         related_name='movimentos_entrada',
     )
     observacao = models.TextField(blank=True)
+    conferido = models.BooleanField(default=False, db_index=True)
+    conferido_em = models.DateTimeField(null=True, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
     class Meta:
