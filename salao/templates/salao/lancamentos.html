@@ -151,6 +151,13 @@
                             <label class="form-check-label fw-semibold" for="id_sem_comissao">Sem comissão</label>
                         </div>
                     </div>
+                    <div class="col-6 col-md-3">
+                        <div class="form-check mt-4 pt-2">
+                            <input class="form-check-input" type="checkbox" id="id_taxa_repassada" name="taxa_repassada">
+                            <label class="form-check-label fw-semibold" for="id_taxa_repassada">Taxa da cliente</label>
+                            <div class="small text-muted">O valor digitado é o líquido; a taxa entra por cima.</div>
+                        </div>
+                    </div>
 
                     <div class="col-12 mt-2">
                         <div class="small text-muted">Fluxo: serviço -> valor -> pagamento -> parcelas -> salvar (<span class="kbd">Enter</span>).</div>
@@ -224,6 +231,13 @@
                         <div class="form-check mt-4 pt-2">
                             <input class="form-check-input" type="checkbox" id="id_edit_sem_comissao" name="sem_comissao" {% if edit_lancamento.sem_comissao %}checked{% endif %}>
                             <label class="form-check-label fw-semibold" for="id_edit_sem_comissao">Sem comissão</label>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="form-check mt-4 pt-2">
+                            <input class="form-check-input" type="checkbox" id="id_edit_taxa_repassada" name="taxa_repassada" {% if edit_lancamento.taxa_repassada %}checked{% endif %}>
+                            <label class="form-check-label fw-semibold" for="id_edit_taxa_repassada">Taxa da cliente</label>
+                            <div class="small text-muted">Informe o líquido desejado; a taxa entra por cima.</div>
                         </div>
                     </div>
                     <div class="col-md-2 d-grid">
@@ -375,6 +389,7 @@
     const valorBrutoInput = document.getElementById('id_valor_bruto');
     const permutaInput = document.getElementById('id_permuta');
     const semComissaoInput = document.getElementById('id_sem_comissao');
+    const taxaRepassadaInput = document.getElementById('id_taxa_repassada');
 
     const servicoPreview = document.getElementById('servico-preview');
     const pagamentoPreview = document.getElementById('pagamento-preview');
@@ -390,6 +405,21 @@
     let lastAutoValue = '';
     let resumoRefreshTimer = null;
     const isPermutaChecked = () => Boolean(permutaInput && permutaInput.checked);
+    const isTaxaRepassadaChecked = () => Boolean(taxaRepassadaInput && taxaRepassadaInput.checked);
+
+    // Espelha _calcular_bruto_com_taxa_repassada: menor bruto cujo líquido alcança o alvo.
+    const brutoComTaxaRepassada = (liquidoDesejado, taxaPercentual) => {
+        if (!taxaPercentual) return liquidoDesejado;
+        const fator = 1 - taxaPercentual / 100;
+        if (fator <= 0) return liquidoDesejado;
+        let bruto = Math.floor((liquidoDesejado / fator) * 100) / 100;
+        for (let i = 0; i < 5; i += 1) {
+            const taxa = Math.round(bruto * taxaPercentual) / 100;
+            if (Math.round((bruto - taxa) * 100) / 100 >= liquidoDesejado) break;
+            bruto = Math.round((bruto + 0.01) * 100) / 100;
+        }
+        return bruto;
+    };
 
     const formatBRL = (rawValue) => {
         const parsed = Number(String(rawValue).replace(',', '.'));
@@ -528,6 +558,19 @@
             return { forma, parcelas, taxaPercentual, valorBruto: null };
         }
 
+        if (isTaxaRepassadaChecked()) {
+            const cobrar = brutoComTaxaRepassada(valorBruto, taxaPercentual);
+            const taxaCobrada = Math.round(cobrar * taxaPercentual) / 100;
+            const liquidoFinal = Math.max(0, Math.round((cobrar - taxaCobrada) * 100) / 100);
+            liquidoPreview.textContent =
+                `Taxa da cliente: cobrar R$ ${formatBRL(cobrar)} (${formatBRL(taxaPercentual)}%) | Líquido: R$ ${formatBRL(liquidoFinal)}`;
+            liquidoPreview.className = 'small text-success fw-semibold';
+            return {
+                forma, parcelas, taxaPercentual,
+                valorBruto: cobrar, valorTaxa: taxaCobrada, valorLiquido: liquidoFinal,
+            };
+        }
+
         const valorTaxa = (valorBruto * taxaPercentual) / 100;
         const valorLiquido = Math.max(0, valorBruto - valorTaxa);
 
@@ -628,6 +671,9 @@
             if (permutaInput.checked && semComissaoInput) {
                 semComissaoInput.checked = false;
             }
+            if (permutaInput.checked && taxaRepassadaInput) {
+                taxaRepassadaInput.checked = false;
+            }
             updateLiquidoPreview();
         });
     }
@@ -637,6 +683,13 @@
                 permutaInput.checked = false;
                 updateLiquidoPreview();
             }
+        });
+    }
+    if (taxaRepassadaInput) {
+        taxaRepassadaInput.addEventListener('change', () => {
+            // Permuta não passa pela maquininha, então não há taxa a repassar.
+            if (taxaRepassadaInput.checked && permutaInput) permutaInput.checked = false;
+            updateLiquidoPreview();
         });
     }
 

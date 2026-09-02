@@ -7,7 +7,7 @@ import uuid
 from collections import Counter, defaultdict
 from itertools import combinations
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_UP
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -285,6 +285,29 @@ def _calcular_liquido_com_taxa(valor_bruto, percentual):
     if valor_liquido < Decimal('0.00'):
         valor_liquido = Decimal('0.00')
     return valor_taxa, valor_liquido
+
+
+def _calcular_bruto_com_taxa_repassada(valor_liquido_desejado, percentual):
+    """Quanto cobrar do cliente para o salão receber `valor_liquido_desejado`.
+
+    O caminho normal é o contrário: informa-se o bruto e desconta-se a taxa.
+    Quando a taxa é repassada à cliente, quem manda é o líquido — cobra-se
+    R$ 103,25 para receber R$ 100,00 limpos.
+
+    Devolve o menor bruto cujo líquido alcança o alvo, porque arredondar o
+    gross-up para baixo deixaria o salão um centavo abaixo do combinado.
+    """
+    if percentual <= Decimal('0.00'):
+        return valor_liquido_desejado
+
+    fator = Decimal('1.00') - (percentual / Decimal('100.00'))
+    if fator <= Decimal('0.00'):
+        return valor_liquido_desejado
+
+    bruto = (valor_liquido_desejado / fator).quantize(Decimal('0.01'), rounding=ROUND_DOWN)
+    while _calcular_liquido_com_taxa(bruto, percentual)[1] < valor_liquido_desejado:
+        bruto += Decimal('0.01')
+    return bruto
 
 
 def _quantize_money(value):
@@ -851,6 +874,7 @@ def lancamentos(request):
             codigo_forma = _normalize_codigo(request.POST.get('codigo_forma_pagamento'))
             permuta = _parse_checkbox(request.POST.get('permuta'))
             sem_comissao = not permuta and _parse_checkbox(request.POST.get('sem_comissao'))
+            taxa_repassada = not permuta and _parse_checkbox(request.POST.get('taxa_repassada'))
             valor_bruto = _parse_decimal(request.POST.get('valor_bruto'))
             dia_post = _parse_day(request, ano, mes, clamp_on_overflow=False)
 
@@ -905,6 +929,9 @@ def lancamentos(request):
                     messages.error(request, 'Taxa não cadastrada para essa forma de pagamento e parcela.')
                     return _redirect_lancamentos(ano, mes, dia_post)
                 taxa_percentual = taxa.percentual
+                if taxa_repassada:
+                    # O valor digitado é o que o salão quer receber; a taxa vai por cima.
+                    valor_bruto = _calcular_bruto_com_taxa_repassada(valor_bruto, taxa_percentual)
                 valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa_percentual)
 
             LancamentoSalao.objects.create(
@@ -914,6 +941,7 @@ def lancamentos(request):
                 parcelas=parcelas,
                 permuta=permuta,
                 sem_comissao=sem_comissao,
+                taxa_repassada=taxa_repassada,
                 valor_bruto=valor_bruto,
                 taxa_percentual_aplicada=taxa_percentual,
                 valor_taxa=valor_taxa,
@@ -923,6 +951,12 @@ def lancamentos(request):
                 messages.success(request, f'Permuta salva. Valor integral: R$ {valor_liquido}.')
             elif sem_comissao:
                 messages.success(request, f'Lançamento sem comissão salvo. Líquido: R$ {valor_liquido}.')
+            elif taxa_repassada:
+                messages.success(
+                    request,
+                    f'Lançamento salvo. Cobrar da cliente: R$ {valor_bruto} '
+                    f'(taxa {taxa_percentual}%). Líquido: R$ {valor_liquido}.',
+                )
             else:
                 messages.success(request, f'Lançamento salvo. Líquido: R$ {valor_liquido}.')
             return _redirect_lancamentos(ano, mes, dia_post)
@@ -939,6 +973,7 @@ def lancamentos(request):
             lancamento = get_object_or_404(LancamentoSalao, id=lancamento_id)
             permuta = _parse_checkbox(request.POST.get('permuta'))
             sem_comissao = not permuta and _parse_checkbox(request.POST.get('sem_comissao'))
+            taxa_repassada = not permuta and _parse_checkbox(request.POST.get('taxa_repassada'))
 
             raw_data = request.POST.get('data')
             try:
@@ -990,6 +1025,9 @@ def lancamentos(request):
                     messages.error(request, 'Taxa não cadastrada para essa forma de pagamento e parcela.')
                     return _redirect_lancamentos(ano, mes, dia)
                 taxa_percentual = taxa.percentual
+                if taxa_repassada:
+                    # O valor digitado é o que o salão quer receber; a taxa vai por cima.
+                    valor_bruto = _calcular_bruto_com_taxa_repassada(valor_bruto, taxa_percentual)
                 valor_taxa, valor_liquido = _calcular_liquido_com_taxa(valor_bruto, taxa_percentual)
 
             lancamento.data = data_editada
@@ -998,6 +1036,7 @@ def lancamentos(request):
             lancamento.parcelas = parcelas
             lancamento.permuta = permuta
             lancamento.sem_comissao = sem_comissao
+            lancamento.taxa_repassada = taxa_repassada
             lancamento.valor_bruto = valor_bruto
             lancamento.taxa_percentual_aplicada = taxa_percentual
             lancamento.valor_taxa = valor_taxa
@@ -1010,6 +1049,7 @@ def lancamentos(request):
                     'parcelas',
                     'permuta',
                     'sem_comissao',
+                    'taxa_repassada',
                     'valor_bruto',
                     'taxa_percentual_aplicada',
                     'valor_taxa',

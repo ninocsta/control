@@ -23,7 +23,11 @@ from .models import (
     TaxaFormaPagamentoSalao,
     TransacaoIgnoradaSalao,
 )
-from .views import _parse_extrato_csv
+from .views import (
+    _calcular_bruto_com_taxa_repassada,
+    _calcular_liquido_com_taxa,
+    _parse_extrato_csv,
+)
 
 
 class SalaoViewsTests(TestCase):
@@ -968,6 +972,90 @@ class SalaoViewsTests(TestCase):
         self.assertAlmostEqual(total_linha[8], 217.00, places=2)
         self.assertAlmostEqual(total_linha[9], 35.40, places=2)
         self.assertAlmostEqual(total_linha[10], 181.60, places=2)
+
+    def test_lancamento_taxa_da_cliente_faz_gross_up_do_valor(self):
+        """Digita 100 (o que quer receber) e o sistema cobra 103,25 da cliente."""
+        self._login()
+        TaxaFormaPagamentoSalao.objects.update_or_create(
+            forma_pagamento=self.forma_credito, parcelas=1,
+            defaults={'percentual': Decimal('3.15')},
+        )
+
+        self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'create_lancamento',
+                'ano': 2026, 'mes': 3, 'dia': 10,
+                'codigo': self.servico.codigo,
+                'codigo_forma_pagamento': self.forma_credito.codigo,
+                'parcelas': 1,
+                'valor_bruto': '100,00',
+                'taxa_repassada': 'on',
+            },
+        )
+
+        lancamento = LancamentoSalao.objects.get()
+        self.assertTrue(lancamento.taxa_repassada)
+        self.assertEqual(lancamento.valor_bruto, Decimal('103.25'))
+        self.assertEqual(lancamento.valor_taxa, Decimal('3.25'))
+        # o que importa: o salão recebe exatamente os 100 digitados
+        self.assertEqual(lancamento.valor_cobrado, Decimal('100.00'))
+
+    def test_lancamento_sem_taxa_da_cliente_mantem_o_comportamento_antigo(self):
+        self._login()
+        TaxaFormaPagamentoSalao.objects.update_or_create(
+            forma_pagamento=self.forma_credito, parcelas=1,
+            defaults={'percentual': Decimal('3.15')},
+        )
+
+        self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'create_lancamento',
+                'ano': 2026, 'mes': 3, 'dia': 10,
+                'codigo': self.servico.codigo,
+                'codigo_forma_pagamento': self.forma_credito.codigo,
+                'parcelas': 1,
+                'valor_bruto': '100,00',
+            },
+        )
+
+        lancamento = LancamentoSalao.objects.get()
+        self.assertFalse(lancamento.taxa_repassada)
+        self.assertEqual(lancamento.valor_bruto, Decimal('100.00'))
+        self.assertEqual(lancamento.valor_cobrado, Decimal('96.85'))
+
+    def test_lancamento_taxa_da_cliente_ignorada_na_permuta(self):
+        self._login()
+
+        self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'create_lancamento',
+                'ano': 2026, 'mes': 3, 'dia': 10,
+                'codigo': self.servico.codigo,
+                'parcelas': 1,
+                'valor_bruto': '100,00',
+                'permuta': 'on',
+                'taxa_repassada': 'on',
+            },
+        )
+
+        lancamento = LancamentoSalao.objects.get()
+        self.assertTrue(lancamento.permuta)
+        self.assertFalse(lancamento.taxa_repassada)
+        self.assertEqual(lancamento.valor_bruto, Decimal('100.00'))
+        self.assertEqual(lancamento.valor_cobrado, Decimal('100.00'))
+
+    def test_gross_up_entrega_sempre_o_liquido_pedido(self):
+        for alvo, percentual in [
+            ('100.00', '3.15'), ('160.00', '7.19'), ('80.00', '1.37'),
+            ('200.00', '5.39'), ('1234.56', '12.40'), ('100.00', '0.00'),
+        ]:
+            with self.subTest(alvo=alvo, taxa=percentual):
+                bruto = _calcular_bruto_com_taxa_repassada(Decimal(alvo), Decimal(percentual))
+                _, liquido = _calcular_liquido_com_taxa(bruto, Decimal(percentual))
+                self.assertEqual(liquido, Decimal(alvo))
 
     def test_lancamento_codigo_invalido_bloqueia_save(self):
         self._login()

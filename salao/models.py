@@ -96,6 +96,7 @@ class LancamentoSalao(models.Model):
     )
     permuta = models.BooleanField(default=False)
     sem_comissao = models.BooleanField(default=False)
+    taxa_repassada = models.BooleanField(default=False)
     valor_bruto = models.DecimalField(
         max_digits=10,
         decimal_places=2,
