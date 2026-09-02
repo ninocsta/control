@@ -352,8 +352,80 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(par['transacao']['identificador'], 'TX002')
         self.assertEqual(par['diferenca_valor'], Decimal('0.00'))
 
+    def test_conferencia_dinheiro_fica_fora_do_pareamento_mas_conferivel(self):
+        """Dinheiro não passa na maquininha: não é pendência, é conferência de caixa."""
+        self._login()
+        self.assertFalse(self.forma_dinheiro.concilia_extrato)
+        caixa = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('130.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+        cartao = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('170.00'),
+            forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual([i.id for i in dia['fora_do_extrato']], [caixa.id])
+        self.assertEqual(dia['total_fora_do_extrato'], Decimal('130.00'))
+        # não vira pendência de extrato nem entra na comparação com a adquirente
+        self.assertNotIn(caixa.id, [i.id for i in dia['sem_par_sistema']])
+        self.assertEqual(dia['total_sistema'], Decimal('170.00'))
+
+        # e continua conferível pelo caixa
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
+             'item': f'servico:{caixa.id}', 'conferido': 'on'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        caixa.refresh_from_db()
+        self.assertTrue(caixa.conferido)
+        self.assertEqual(cartao.forma_pagamento_id, self.forma_pix.id)
+
+    def test_conferencia_dia_so_de_dinheiro_fecha_conferido(self):
+        """Um dia só de dinheiro tem que poder ficar 100% conferido."""
+        self._login()
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('130.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('50.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'conferir_dia', 'ano': 2026, 'mes': 3, 'dia': 15},
+        )
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertTrue(dia['tudo_conferido'])
+        self.assertEqual(dia['pendentes'], 0)
+        self.assertEqual(dia['diferenca'], Decimal('0.00'))
+
+    def test_conferencia_forma_pode_voltar_a_conciliar_pelo_cadastro(self):
+        """A regra é do cadastro, não do nome: dá para mudar."""
+        self._login()
+        FormaPagamentoSalao.objects.filter(pk=self.forma_dinheiro.pk).update(
+            concilia_extrato=True,
+        )
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('130.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual(dia['fora_do_extrato'], [])
+        self.assertIn(lancamento.id, [i.id for i in dia['sem_par_sistema']])
+
     def test_conferencia_nao_pareia_meios_de_pagamento_diferentes(self):
-        """Dinheiro de R$ 100,00 não pode casar com Crédito de R$ 103,15/99,91."""
+        """Débito de R$ 100,00 não pode casar com Crédito de R$ 103,15/99,91."""
         self._login()
         csv_credito = (
             'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
@@ -365,7 +437,7 @@ class SalaoViewsTests(TestCase):
         lancamento = self._create_lancamento(
             data=date(2026, 3, 15),
             valor_bruto=Decimal('100.00'),
-            forma_pagamento=self.forma_dinheiro,
+            forma_pagamento=self.forma_debito,
         )
         self._importar_extrato(csv_credito)
 
@@ -919,7 +991,7 @@ class SalaoViewsTests(TestCase):
             data=date(2026, 3, 15), valor_bruto=Decimal('170.00'), forma_pagamento=self.forma_pix,
         )
         self._create_lancamento(
-            data=date(2026, 3, 15), valor_bruto=Decimal('120.00'), forma_pagamento=self.forma_dinheiro,
+            data=date(2026, 3, 15), valor_bruto=Decimal('120.00'), forma_pagamento=self.forma_debito,
         )
         self._importar_extrato(csv_290)
 

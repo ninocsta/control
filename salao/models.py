@@ -32,6 +32,9 @@ class FormaPagamentoSalao(models.Model):
     nome = models.CharField(max_length=80)
     ativo = models.BooleanField(default=True)
     aceita_parcelamento = models.BooleanField(default=False)
+    # Dinheiro não passa pela maquininha: cobrar dele um par no extrato da
+    # adquirente só gera pendência que nunca fecha.
+    concilia_extrato = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = 'Forma de Pagamento do Salão'

@@ -599,6 +599,9 @@ class ItemConferencia:
         self.parcelas = origem.parcelas
         self.conferido = origem.conferido
         self.taxa_percentual_aplicada = origem.taxa_percentual_aplicada
+        self.concilia_extrato = bool(
+            origem.forma_pagamento and origem.forma_pagamento.concilia_extrato
+        )
         if tipo == self.SERVICO:
             self.valor_bruto = origem.valor_bruto
             self.descricao = f'{origem.servico.codigo} - {origem.servico.nome}'
@@ -1977,6 +1980,7 @@ def pagamentos(request):
             codigo = _normalize_codigo(request.POST.get('codigo'))
             nome = (request.POST.get('nome') or '').strip()
             aceita_parcelamento = _parse_checkbox(request.POST.get('aceita_parcelamento'))
+            concilia_extrato = _parse_checkbox(request.POST.get('concilia_extrato'))
             ativo = _parse_checkbox(request.POST.get('ativo'))
 
             if not codigo or not nome:
@@ -1991,6 +1995,7 @@ def pagamentos(request):
                 codigo=codigo,
                 nome=nome,
                 aceita_parcelamento=aceita_parcelamento,
+                concilia_extrato=concilia_extrato,
                 ativo=ativo,
             )
             messages.success(request, 'Forma de pagamento criada com sucesso.')
@@ -2003,6 +2008,7 @@ def pagamentos(request):
             codigo = _normalize_codigo(request.POST.get('codigo'))
             nome = (request.POST.get('nome') or '').strip()
             aceita_parcelamento = _parse_checkbox(request.POST.get('aceita_parcelamento'))
+            concilia_extrato = _parse_checkbox(request.POST.get('concilia_extrato'))
             ativo = _parse_checkbox(request.POST.get('ativo'))
 
             if not codigo or not nome:
@@ -2016,6 +2022,7 @@ def pagamentos(request):
             forma.codigo = codigo
             forma.nome = nome
             forma.aceita_parcelamento = aceita_parcelamento
+            forma.concilia_extrato = concilia_extrato
             forma.ativo = ativo
             forma.save()
             messages.success(request, 'Forma de pagamento atualizada com sucesso.')
@@ -2786,8 +2793,9 @@ def conferencia(request):
     disponiveis_por_dia = defaultdict(list)
     for dia in sorted(set(itens_por_dia) | set(transacoes_por_dia)):
         do_dia = itens_por_dia.get(dia, [])
-        # Permuta não passa pelo banco: fica de fora do pareamento, mas continua visível.
-        conciliaveis = [i for i in do_dia if not i.permuta]
+        # Permuta não movimenta dinheiro e o caixa não passa pela maquininha:
+        # nenhum dos dois tem par possível no extrato da adquirente.
+        conciliaveis = [i for i in do_dia if not i.permuta and i.concilia_extrato]
         pares, sem_par_sistema, sem_par_extrato = _parear_dia(
             conciliaveis,
             transacoes_por_dia.get(dia, []),
@@ -2818,6 +2826,7 @@ def conferencia(request):
     dias_context = []
     total_sistema = Decimal('0.00')
     total_extrato = Decimal('0.00')
+    total_fora_do_extrato = Decimal('0.00')
     total_conferidos = 0
     total_itens = 0
     total_sem_par_sistema = 0
@@ -2829,9 +2838,12 @@ def conferencia(request):
         sem_par_sistema = pendentes_por_dia[dia]
         sem_par_extrato = disponiveis_por_dia[dia]
 
+        fora_do_extrato = [i for i in do_dia if not i.permuta and not i.concilia_extrato]
         soma_sistema = sum(
-            (i.valor_bruto for i in do_dia if not i.permuta), Decimal('0.00'),
+            (i.valor_bruto for i in do_dia if not i.permuta and i.concilia_extrato),
+            Decimal('0.00'),
         )
+        soma_fora_do_extrato = sum((i.valor_bruto for i in fora_do_extrato), Decimal('0.00'))
         soma_extrato = sum(
             (Decimal(t['bruto']) for t in todas_transacoes_por_dia.get(dia, [])),
             Decimal('0.00'),
@@ -2839,6 +2851,7 @@ def conferencia(request):
         conferidos_dia = sum(1 for i in do_dia if i.conferido)
 
         total_sistema += soma_sistema
+        total_fora_do_extrato += soma_fora_do_extrato
         total_extrato += soma_extrato
         total_conferidos += conferidos_dia
         total_itens += len(do_dia)
@@ -2865,6 +2878,8 @@ def conferencia(request):
             'sem_par_sistema': sem_par_sistema,
             'sem_par_extrato': sem_par_extrato,
             'permutas': [i for i in do_dia if i.permuta],
+            'fora_do_extrato': fora_do_extrato,
+            'total_fora_do_extrato': soma_fora_do_extrato,
             'quantidade': len(do_dia),
             'conferidos': conferidos_dia,
             'pendentes': len(do_dia) - conferidos_dia,
@@ -2897,6 +2912,7 @@ def conferencia(request):
         'resumo': {
             'total_sistema': total_sistema,
             'total_extrato': total_extrato,
+            'total_fora_do_extrato': total_fora_do_extrato,
             'diferenca': (total_sistema - total_extrato).quantize(Decimal('0.01')),
             'lancamentos': total_itens,
             'conferidos': total_conferidos,

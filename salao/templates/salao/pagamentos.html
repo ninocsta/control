@@ -32,6 +32,11 @@
                             <input class="form-check-input" type="checkbox" name="aceita_parcelamento" id="id_aceita_parcelamento" {% if edit_forma %}{% if edit_forma.aceita_parcelamento %}checked{% endif %}{% endif %}>
                             <label class="form-check-label" for="id_aceita_parcelamento">Aceita parcelamento (1x a 12x)</label>
                         </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="concilia_extrato" id="id_concilia_extrato" {% if edit_forma %}{% if edit_forma.concilia_extrato %}checked{% endif %}{% else %}checked{% endif %}>
+                            <label class="form-check-label" for="id_concilia_extrato">Aparece no extrato da adquirente</label>
+                            <div class="small text-muted">Desmarque para dinheiro: a conferência não cobra par no extrato, só o check do caixa.</div>
+                        </div>
                     </div>
                     <div class="col-12 col-md-6">
                         <div class="form-check mt-3">
@@ -65,6 +70,7 @@
                                 <th>Código</th>
                                 <th>Nome</th>
                                 <th class="text-center">Parcelamento</th>
+                                <th class="text-center">No extrato</th>
                                 <th class="text-center">Status</th>
                                 <th class="text-end">Ações</th>
                             </tr>
@@ -75,6 +81,7 @@
                                 <td>{{ forma.codigo }}</td>
                                 <td>{{ forma.nome }}</td>
                                 <td class="text-center">{% if forma.aceita_parcelamento %}Sim{% else %}Não{% endif %}</td>
+                                <td class="text-center">{% if forma.concilia_extrato %}Sim{% else %}<span class="text-muted">Não</span>{% endif %}</td>
                                 <td class="text-center">{% if forma.ativo %}Ativa{% else %}Inativa{% endif %}</td>
                                 <td class="text-end text-nowrap">
                                     <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:pagamentos' %}?edit_forma={{ forma.id }}">Editar</a>
