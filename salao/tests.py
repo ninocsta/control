@@ -663,6 +663,63 @@ class SalaoViewsTests(TestCase):
             LancamentoSalao.objects.filter(data=date(2026, 3, 15), conferido=True).count(), 1,
         )
 
+    def test_conferencia_desmarcar_o_mes_inteiro(self):
+        """Recomeçar a conferência sem ter que desmarcar dia a dia."""
+        self._login()
+        servico = self._create_lancamento(
+            data=date(2026, 3, 5), valor_bruto=Decimal('80.00'), forma_pagamento=self.forma_pix,
+        )
+        caixa = self._create_lancamento(
+            data=date(2026, 3, 20), valor_bruto=Decimal('50.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+        venda = self._create_venda_produto(data=date(2026, 3, 12), valor_bruto=Decimal('30.00'))
+        outro_mes = self._create_lancamento(
+            data=date(2026, 4, 3), valor_bruto=Decimal('90.00'), forma_pagamento=self.forma_pix,
+        )
+        for item in (servico, caixa, venda, outro_mes):
+            item.conferido = True
+            item.save(update_fields=['conferido'])
+
+        response = self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'desconferir_mes', 'ano': 2026, 'mes': 3,
+             'retorno': 'ano=2026&mes=3'},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        for item in (servico, caixa, venda):
+            item.refresh_from_db()
+            self.assertFalse(item.conferido)
+            self.assertIsNone(item.conferido_em)
+
+        # abril não é tocado
+        outro_mes.refresh_from_db()
+        self.assertTrue(outro_mes.conferido)
+
+    def test_conferencia_desmarcar_o_mes_preserva_vinculos_manuais(self):
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{penteado.id}'], 'transacao': ['TXA', 'TXB', 'TXC']},
+        )
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'conferir_dia', 'ano': 2026, 'mes': 3, 'dia': 6},
+        )
+
+        self.client.post(
+            reverse('salao:conferencia'), {'action': 'desconferir_mes', 'ano': 2026, 'mes': 3},
+        )
+        penteado.refresh_from_db()
+        self.assertFalse(penteado.conferido)
+        self.assertEqual(ConciliacaoManualSalao.objects.count(), 4)
+
     def test_conferencia_conferir_dia_nao_liga_filtro_de_dia(self):
         """Conferir/desmarcar um dia mantém a tela em que o usuário estava."""
         self._login()

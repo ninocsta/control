@@ -21,7 +21,7 @@
     .conf-metric strong { color: #212529; font-size: .95rem; display: block; }
     .conf-linha {
         display: grid;
-        grid-template-columns: 2.2rem 1fr 1fr;
+        grid-template-columns: 2rem 2rem 1fr 1fr;
         gap: .5rem;
         align-items: center;
         padding: .45rem .25rem;
@@ -53,7 +53,7 @@
     .conf-barra-vinculo[hidden] { display: none !important; }
     .conf-cabecalho-lados {
         display: grid;
-        grid-template-columns: 2.2rem 1fr 1fr;
+        grid-template-columns: 2rem 2rem 1fr 1fr;
         gap: .5rem;
         font-size: .72rem;
         text-transform: uppercase;
@@ -61,9 +61,10 @@
         color: #6c757d;
         padding: .25rem;
     }
+    .conf-coluna { display: flex; flex-direction: column; align-items: center; gap: .55rem; }
     @media (max-width: 767px) {
-        .conf-linha, .conf-cabecalho-lados { grid-template-columns: 2.2rem 1fr; }
-        .conf-linha .conf-lado-extrato { grid-column: 2; padding-left: .5rem; border-left: 2px solid #e9ecef; }
+        .conf-linha, .conf-cabecalho-lados { grid-template-columns: 2rem 2rem 1fr; }
+        .conf-linha .conf-lado-extrato { grid-column: 3; padding-left: .5rem; border-left: 2px solid #e9ecef; }
         .conf-cabecalho-lados .conf-lado-extrato { display: none; }
     }
 </style>
@@ -182,6 +183,20 @@
     </div>
 </div>
 
+<div class="d-flex justify-content-end mb-3">
+    <form method="post" onsubmit="return confirm('Desmarcar a conferência de todos os dias de {{ mes|stringformat:'02d' }}/{{ ano }}? Os vínculos manuais são mantidos.');">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="desconferir_mes">
+        <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
+        <input type="hidden" name="ano" value="{{ ano }}">
+        <input type="hidden" name="mes" value="{{ mes }}">
+        <button class="btn btn-sm btn-outline-danger" type="submit"
+                {% if not resumo.conferidos %}disabled{% endif %}>
+            Desmarcar o mês inteiro{% if resumo.conferidos %} ({{ resumo.conferidos }}){% endif %}
+        </button>
+    </form>
+</div>
+
 {% if extrato_outra_competencia %}
 <div class="alert alert-warning py-2">
     O extrato carregado não tem nenhuma transação de {{ mes|stringformat:'02d' }}/{{ ano }}. Ele cobre:
@@ -270,20 +285,22 @@
         </div>
 
         <div class="conf-cabecalho-lados">
-            <span>OK</span>
+            <span title="Conferido">OK</span>
+            <span title="Selecionar para vincular manualmente">Vinc</span>
             <span>Lançamento no sistema</span>
             <span class="conf-lado-extrato">Transação no extrato</span>
         </div>
 
         {% for par in item.pares %}
         <div class="conf-linha {% if par.todos_conferidos %}is-conferido{% endif %}">
-            <div class="d-flex flex-column gap-1">
+            <div class="conf-coluna">
                 {% for lancamento in par.lancamentos %}
                 <input class="form-check-input conf-check js-conferir" type="checkbox"
                        data-item="{{ lancamento.chave }}"
                        {% if lancamento.conferido %}checked{% endif %}>
                 {% endfor %}
             </div>
+            <div class="conf-coluna"></div>
             <div class="conf-lado">
                 {% for lancamento in par.lancamentos %}
                 <div{% if not forloop.first %} class="mt-1 pt-1 border-top"{% endif %}>
@@ -359,13 +376,16 @@
 
         {% for lancamento in item.sem_par_sistema %}
         <div class="conf-linha {% if lancamento.conferido %}is-conferido{% endif %}" data-linha>
-            <div class="d-flex flex-column align-items-center gap-1">
+            <div class="conf-coluna">
                 <input class="form-check-input conf-check js-conferir" type="checkbox"
                        data-item="{{ lancamento.chave }}"
-                       {% if lancamento.conferido %}checked{% endif %}>
+                       {% if lancamento.conferido %}checked{% endif %}
+                       title="Marcar como conferido">
+            </div>
+            <div class="conf-coluna">
                 <input class="form-check-input conf-sel js-selecao" type="checkbox"
                        data-tipo="item" value="{{ lancamento.chave }}"
-                       title="Selecionar para vincular">
+                       title="Selecionar para vincular manualmente">
             </div>
             <div class="conf-lado">
                 <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-{{ lancamento.chave }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
@@ -416,11 +436,11 @@
 
         {% for transacao in item.sem_par_extrato %}
         <div class="conf-linha">
-            <div class="d-flex flex-column align-items-center gap-1">
-                <span class="text-danger fw-bold">!</span>
+            <div class="conf-coluna"><span class="text-danger fw-bold">!</span></div>
+            <div class="conf-coluna">
                 <input class="form-check-input conf-sel js-selecao" type="checkbox"
                        data-tipo="transacao" value="{{ transacao.identificador }}"
-                       title="Selecionar para vincular">
+                       title="Selecionar para vincular manualmente">
             </div>
             <div class="conf-lado vazio">sem lançamento no sistema</div>
             <div class="conf-lado conf-lado-extrato">
@@ -436,11 +456,13 @@
 
         {% for lancamento in item.fora_do_extrato %}
         <div class="conf-linha {% if lancamento.conferido %}is-conferido{% endif %}">
-            <div>
+            <div class="conf-coluna">
                 <input class="form-check-input conf-check js-conferir" type="checkbox"
                        data-item="{{ lancamento.chave }}"
-                       {% if lancamento.conferido %}checked{% endif %}>
+                       {% if lancamento.conferido %}checked{% endif %}
+                       title="Marcar como conferido">
             </div>
+            <div class="conf-coluna"></div>
             <div class="conf-lado">
                 <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-{{ lancamento.chave }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
                 {% if lancamento.tipo == 'produto' %}<span class="badge text-bg-dark">PRODUTO</span>{% endif %}
@@ -456,7 +478,8 @@
 
         {% for lancamento in item.permutas %}
         <div class="conf-linha">
-            <div><span class="badge text-bg-warning">P</span></div>
+            <div class="conf-coluna"><span class="badge text-bg-warning">P</span></div>
+            <div class="conf-coluna"></div>
             <div class="conf-lado">
                 <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-p-{{ lancamento.chave }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
                 <div class="conf-sub">{{ lancamento.descricao }}</div>

@@ -2592,6 +2592,25 @@ def conferencia(request):
             )
             return _redirect_conferencia(ano, mes, retorno=retorno)
 
+        if action == 'desconferir_mes':
+            valores = {'conferido': False, 'conferido_em': None}
+            inicio_mes, fim_mes = _date_range_for_month(ano, mes)
+            atualizados = LancamentoSalao.objects.filter(
+                data__range=(inicio_mes, fim_mes), conferido=True,
+            ).update(**valores)
+            atualizados += MovimentoEstoqueSalao.objects.filter(
+                data__range=(inicio_mes, fim_mes),
+                tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+                motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
+                conferido=True,
+            ).update(**valores)
+            messages.success(
+                request,
+                f'{atualizados} item(ns) desmarcados em {mes:02d}/{ano}. '
+                'Os vínculos manuais foram mantidos.',
+            )
+            return _redirect_conferencia(ano, mes, retorno=retorno)
+
         if action in {'conferir_dia', 'desconferir_dia'}:
             dia = _parse_day(request, ano, mes)
             if dia is None:
