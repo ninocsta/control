@@ -34,6 +34,23 @@
     .conf-lado.vazio { color: #b02a37; font-style: italic; }
     .conf-sub { font-size: .75rem; color: #6c757d; }
     .conf-check { width: 1.35rem; height: 1.35rem; cursor: pointer; }
+    .conf-sel { width: 1.1rem; height: 1.1rem; cursor: pointer; accent-color: #6f42c1; }
+    .conf-linha.is-selecionada { background: #f5f0ff; box-shadow: inset 3px 0 0 #6f42c1; }
+    .conf-barra-vinculo {
+        position: sticky;
+        bottom: 0;
+        z-index: 20;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .75rem;
+        padding: .6rem .9rem;
+        background: #6f42c1;
+        color: #fff;
+        border-radius: .5rem;
+        box-shadow: 0 -2px 12px rgba(0,0,0,.18);
+    }
+    .conf-barra-vinculo[hidden] { display: none !important; }
     .conf-cabecalho-lados {
         display: grid;
         grid-template-columns: 2.2rem 1fr 1fr;
@@ -274,28 +291,48 @@
                 {% if par.combinado %}
                 <div class="conf-sub mt-1">
                     <span class="badge text-bg-primary">{{ par.lancamentos|length }} itens somam R$ {{ par.total_lancado|floatformat:2 }}</span>
-                    {% if par.entre_dias %}<span class="badge text-bg-warning">pagamento cobre dias diferentes</span>{% endif %}
                 </div>
                 {% endif %}
             </div>
             <div class="conf-lado conf-lado-extrato">
-                <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-t-{{ par.transacao.identificador }}">R$ {{ par.transacao.bruto }}</span>
-                <div class="conf-sub">
-                    {{ par.transacao.hora }} · {{ par.transacao.meio }}{% if par.transacao.bandeira and par.transacao.bandeira != par.transacao.meio %} {{ par.transacao.bandeira }}{% endif %} ·
-                    {{ par.transacao.parcelas }}x · líquido R$ {{ par.transacao.liquido }} · taxa {{ par.transacao.taxa_percentual }}%
-                    {% if par.taxa_divergente %}<span class="text-warning-emphasis">(cadastro difere {{ par.diferenca_taxa }} p.p.)</span>{% endif %}
+                {% for transacao in par.transacoes %}
+                <div{% if not forloop.first %} class="mt-1 pt-1 border-top"{% endif %}>
+                    <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-t-{{ transacao.identificador }}">R$ {{ transacao.bruto }}</span>
+                    {% if par.entre_dias %}<span class="badge text-bg-warning">{{ transacao.dia|stringformat:'02d' }}/{{ mes|stringformat:'02d' }}</span>{% endif %}
+                    <div class="conf-sub">
+                        {{ transacao.hora }} · {{ transacao.meio }}{% if transacao.bandeira and transacao.bandeira != transacao.meio %} {{ transacao.bandeira }}{% endif %} ·
+                        {{ transacao.parcelas }}x · líquido R$ {{ transacao.liquido }} · taxa {{ transacao.taxa_percentual }}%
+                        {% if par.taxa_divergente %}<span class="text-warning-emphasis">(cadastro difere {{ par.diferenca_taxa }} p.p.)</span>{% endif %}
+                    </div>
+                    {% include 'salao/partials/conferencia_ignorar.html' with transacao=transacao %}
                 </div>
-                <div class="conf-sub">
+                {% endfor %}
+                <div class="conf-sub mt-1">
+                    {% if par.parcelado %}
+                        <span class="badge text-bg-primary">{{ par.transacoes|length }} pagamentos somam R$ {{ par.total_recebido|floatformat:2 }}</span>
+                    {% endif %}
                     {% if par.criterio == 'liquido' %}
                         <span class="badge text-bg-light border">casou pelo líquido — taxa embutida no cliente</span>
                     {% else %}
                         <span class="badge text-bg-light border">casou pelo bruto — taxa paga por você</span>
                     {% endif %}
+                    {% if par.entre_dias %}<span class="badge text-bg-warning">pagamento em dias diferentes</span>{% endif %}
+                    {% if par.manual %}<span class="badge" style="background:#6f42c1">vínculo manual</span>{% endif %}
                     {% if par.diferenca_valor %}
                         <span class="badge text-bg-danger">difere R$ {{ par.diferenca_valor|floatformat:2 }}</span>
                     {% endif %}
                 </div>
-                {% include 'salao/partials/conferencia_ignorar.html' with transacao=par.transacao %}
+                {% if par.manual %}
+                <form method="post" class="mt-1">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="desvincular_manual">
+                    <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
+                    <input type="hidden" name="ano" value="{{ ano }}">
+                    <input type="hidden" name="mes" value="{{ mes }}">
+                    <input type="hidden" name="grupo" value="{{ par.grupo }}">
+                    <button class="btn btn-sm btn-outline-secondary py-0" type="submit">Desfazer vínculo</button>
+                </form>
+                {% endif %}
             </div>
         </div>
         {% endfor %}
@@ -312,10 +349,13 @@
 
         {% for lancamento in item.sem_par_sistema %}
         <div class="conf-linha {% if lancamento.conferido %}is-conferido{% endif %}" data-linha>
-            <div>
+            <div class="d-flex flex-column align-items-center gap-1">
                 <input class="form-check-input conf-check js-conferir" type="checkbox"
                        data-item="{{ lancamento.chave }}"
                        {% if lancamento.conferido %}checked{% endif %}>
+                <input class="form-check-input conf-sel js-selecao" type="checkbox"
+                       data-tipo="item" value="{{ lancamento.chave }}"
+                       title="Selecionar para vincular">
             </div>
             <div class="conf-lado">
                 <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-{{ lancamento.chave }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
@@ -366,7 +406,12 @@
 
         {% for transacao in item.sem_par_extrato %}
         <div class="conf-linha">
-            <div><span class="text-danger fw-bold">!</span></div>
+            <div class="d-flex flex-column align-items-center gap-1">
+                <span class="text-danger fw-bold">!</span>
+                <input class="form-check-input conf-sel js-selecao" type="checkbox"
+                       data-tipo="transacao" value="{{ transacao.identificador }}"
+                       title="Selecionar para vincular">
+            </div>
             <div class="conf-lado vazio">sem lançamento no sistema</div>
             <div class="conf-lado conf-lado-extrato">
                 <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-x-{{ forloop.counter }}-{{ item.dia }}">R$ {{ transacao.bruto }}</span>
@@ -396,6 +441,22 @@
     Nada para conferir com os filtros atuais.
 </div></div>
 {% endfor %}
+
+<div class="conf-barra-vinculo" id="barra-vinculo" hidden>
+    <strong>Vincular manualmente</strong>
+    <span id="barra-vinculo-resumo"></span>
+    <span class="ms-auto d-flex gap-2">
+        <button class="btn btn-sm btn-light" type="button" id="btn-vincular">Vincular selecionados</button>
+        <button class="btn btn-sm btn-outline-light" type="button" id="btn-limpar-selecao">Limpar</button>
+    </span>
+</div>
+<form method="post" id="form-vinculo" class="d-none">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="vincular_manual">
+    <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
+    <input type="hidden" name="ano" value="{{ ano }}">
+    <input type="hidden" name="mes" value="{{ mes }}">
+</form>
 {% endblock %}
 
 {% block extra_js %}
@@ -439,6 +500,61 @@
                 .finally(() => { check.disabled = false; });
         });
     });
+
+    // Seleção manual: o usuário amarra o que o pareamento automático não tem
+    // como saber (três Pix da mesma cliente, pagamento adiantado de outro dia).
+    const selecoes = Array.from(document.querySelectorAll('.js-selecao'));
+    const barra = document.getElementById('barra-vinculo');
+    const resumo = document.getElementById('barra-vinculo-resumo');
+    const formVinculo = document.getElementById('form-vinculo');
+    if (!selecoes.length || !barra || !formVinculo) return;
+
+    const marcados = (tipo) => selecoes.filter((c) => c.checked && c.dataset.tipo === tipo);
+
+    const atualizarBarra = () => {
+        const itens = marcados('item');
+        const transacoes = marcados('transacao');
+        const total = itens.length + transacoes.length;
+        barra.hidden = total === 0;
+        resumo.textContent =
+            `${itens.length} lançamento(s) e ${transacoes.length} pagamento(s) selecionados`;
+        document.getElementById('btn-vincular').disabled =
+            itens.length === 0 || transacoes.length === 0;
+    };
+
+    selecoes.forEach((check) => {
+        check.addEventListener('change', () => {
+            const linha = check.closest('.conf-linha');
+            if (linha) linha.classList.toggle('is-selecionada', check.checked);
+            atualizarBarra();
+        });
+    });
+
+    document.getElementById('btn-limpar-selecao').addEventListener('click', () => {
+        selecoes.forEach((check) => {
+            check.checked = false;
+            const linha = check.closest('.conf-linha');
+            if (linha) linha.classList.remove('is-selecionada');
+        });
+        atualizarBarra();
+    });
+
+    document.getElementById('btn-vincular').addEventListener('click', () => {
+        formVinculo.querySelectorAll('.js-campo-selecao').forEach((campo) => campo.remove());
+        [['item', 'item'], ['transacao', 'transacao']].forEach(([tipo, nome]) => {
+            marcados(tipo).forEach((check) => {
+                const campo = document.createElement('input');
+                campo.type = 'hidden';
+                campo.name = nome;
+                campo.value = check.value;
+                campo.className = 'js-campo-selecao';
+                formVinculo.appendChild(campo);
+            });
+        });
+        formVinculo.submit();
+    });
+
+    atualizarBarra();
 })();
 </script>
 {% endblock %}

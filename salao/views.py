@@ -15,7 +15,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import CharField, Count, F, Sum, Value
+from django.db.models import CharField, Count, F, Q, Sum, Value
 from django.db.models.deletion import ProtectedError
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse
@@ -37,6 +37,7 @@ from .models import (
     ServicoSalao,
     SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
+    ConciliacaoManualSalao,
     TransacaoIgnoradaSalao,
 )
 
@@ -572,6 +573,10 @@ TOLERANCIA_TAXA_PP = Decimal('0.50')
 # (cliente que paga 290 numa passada só, cobrindo um serviço de 170 e outro de 120).
 MAX_LANCAMENTOS_POR_TRANSACAO = 3
 
+# Quantas transações podem somar para fechar um lançamento só
+# (penteado de R$ 250,00 pago em três Pix ao longo da semana).
+MAX_TRANSACOES_POR_LANCAMENTO = 3
+
 
 class ItemConferencia:
     """Um serviço ou uma venda de produto, com a mesma cara para o pareamento.
@@ -650,24 +655,29 @@ def _meio_do_lancamento(lancamento):
     )
 
 
-def _montar_par(lancamentos, transacao, criterio, diferenca):
-    """Monta a linha de conferência de uma transação já casada.
+def _montar_par(lancamentos, transacoes, criterio, diferenca, entre_dias=False):
+    """Monta a linha de conferência de um casamento já fechado.
 
-    A comparação de taxa só faz sentido quando um único lançamento cobre a
-    transação; somando vários, cada um pode ter a sua.
+    A comparação de taxa só faz sentido quando um lançamento e uma transação
+    se correspondem um a um; somando qualquer um dos lados, cada parte tem a sua.
     """
+    transacoes = [t for t in transacoes if t]
     diferenca_taxa = None
-    if len(lancamentos) == 1:
+    if len(lancamentos) == 1 and len(transacoes) == 1:
         diferenca_taxa = (
-            Decimal(transacao['taxa_percentual']) - lancamentos[0].taxa_percentual_aplicada
+            Decimal(transacoes[0]['taxa_percentual']) - lancamentos[0].taxa_percentual_aplicada
         ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     return {
         'lancamentos': lancamentos,
-        'transacao': transacao,
+        'transacoes': transacoes,
+        'transacao': transacoes[0] if transacoes else None,
+        'manual': False,
         'criterio': criterio,
         'combinado': len(lancamentos) > 1,
-        'entre_dias': False,
+        'parcelado': len(transacoes) > 1,
+        'entre_dias': entre_dias,
         'total_lancado': sum((l.valor_bruto for l in lancamentos), Decimal('0.00')),
+        'total_recebido': sum((Decimal(t['bruto']) for t in transacoes), Decimal('0.00')),
         'todos_conferidos': all(l.conferido for l in lancamentos),
         'diferenca_valor': diferenca.quantize(Decimal('0.01')),
         'diferenca_taxa': diferenca_taxa,
@@ -675,124 +685,213 @@ def _montar_par(lancamentos, transacao, criterio, diferenca):
     }
 
 
+def _aplicar_conciliacoes_manuais(itens, transacoes):
+    """Separa o que o usuário já amarrou à mão.
+
+    Devolve (pares, itens_restantes, transacoes_restantes). Um grupo cujas
+    pontas não estão todas neste mês aparece assim mesmo, com o que houver —
+    é melhor mostrar o vínculo incompleto do que devolvê-lo ao palpite.
+    """
+    por_chave = {item.chave: item for item in itens}
+    por_identificador = {t['identificador']: t for t in transacoes}
+    if not por_chave and not por_identificador:
+        return [], itens, transacoes
+
+    grupos = defaultdict(lambda: {'itens': [], 'transacoes': []})
+    vinculos = ConciliacaoManualSalao.objects.filter(
+        Q(identificador__in=por_identificador)
+        | Q(lancamento_id__in=[
+            i.id for i in itens if i.tipo == ItemConferencia.SERVICO
+        ])
+        | Q(movimento_id__in=[
+            i.id for i in itens if i.tipo == ItemConferencia.PRODUTO
+        ])
+    )
+    for vinculo in vinculos:
+        if vinculo.identificador:
+            transacao = por_identificador.get(vinculo.identificador)
+            if transacao:
+                grupos[vinculo.grupo]['transacoes'].append(transacao)
+            continue
+        chave = (
+            f'{ItemConferencia.SERVICO}:{vinculo.lancamento_id}'
+            if vinculo.lancamento_id
+            else f'{ItemConferencia.PRODUTO}:{vinculo.movimento_id}'
+        )
+        item = por_chave.get(chave)
+        if item:
+            grupos[vinculo.grupo]['itens'].append(item)
+
+    pares = []
+    usados_itens = set()
+    usados_transacoes = set()
+    for grupo, partes in grupos.items():
+        if not partes['itens'] or not partes['transacoes']:
+            # Sem os dois lados no mês não há o que mostrar como par; as pontas
+            # que sobrarem voltam para a lista normal de pendências.
+            continue
+        total_itens = sum((i.valor_bruto for i in partes['itens']), Decimal('0.00'))
+        total_transacoes = sum(
+            (Decimal(t['bruto']) for t in partes['transacoes']), Decimal('0.00')
+        )
+        par = _montar_par(
+            sorted(partes['itens'], key=lambda i: (i.data, i.id)),
+            sorted(partes['transacoes'], key=lambda t: (t['dia'], t['hora'])),
+            'bruto',
+            total_itens - total_transacoes,
+        )
+        par['manual'] = True
+        par['grupo'] = str(grupo)
+        dias = [t['dia'] for t in partes['transacoes']] or [i.data.day for i in partes['itens']]
+        par['dia_transacao'] = max(dias)
+        par['entre_dias'] = len(set(
+            [t['dia'] for t in partes['transacoes']] + [i.data.day for i in partes['itens']]
+        )) > 1
+        pares.append(par)
+        usados_itens.update(i.chave for i in partes['itens'])
+        usados_transacoes.update(t['identificador'] for t in partes['transacoes'])
+
+    return (
+        pares,
+        [i for i in itens if i.chave not in usados_itens],
+        [t for t in transacoes if t['identificador'] not in usados_transacoes],
+    )
+
+
+def _combinacoes_ate(sequencia, maximo):
+    for tamanho in range(1, min(maximo, len(sequencia)) + 1):
+        yield from combinations(sequencia, tamanho)
+
+
+def _melhor_casamento(itens, transacoes, limite, max_itens, max_transacoes, dias_distintos):
+    """Melhor casamento possível, ou None.
+
+    Só um dos lados combina de cada vez (`max_itens` ou `max_transacoes` é 1):
+    combinar os dois ao mesmo tempo explode o número de tentativas sem cobrir
+    nenhum caso real. O meio de pagamento é sempre obrigatório — sem isso um
+    Dinheiro de R$ 100,00 casaria com um Crédito de R$ 99,91 pelo valor.
+    """
+    melhor = None
+    for grupo_itens in _combinacoes_ate(itens, max_itens):
+        meio = _meio_do_lancamento(grupo_itens[0])
+        if any(_meio_do_lancamento(i) != meio for i in grupo_itens):
+            continue
+        total_itens = sum((i.valor_bruto for i in grupo_itens), Decimal('0.00'))
+
+        for grupo_transacoes in _combinacoes_ate(transacoes, max_transacoes):
+            if any(_normalizar_texto(t['meio']) != meio for t in grupo_transacoes):
+                continue
+            if dias_distintos:
+                datas = {i.data.day for i in grupo_itens} | {t['dia'] for t in grupo_transacoes}
+                if len(datas) < 2:
+                    continue  # já foi tentado no pareamento do próprio dia
+            # Muitas combinações somam o mesmo valor. O desempate, em ordem: pagamentos
+            # do mesmo cliente (o extrato traz o nome), depois os mais próximos da data
+            # do atendimento, depois os que usam menos partes.
+            nomes = {_normalizar_texto(t['nome']) for t in grupo_transacoes if t['nome'].strip()}
+            clientes_distintos = max(len(nomes) - 1, 0)
+            dispersao = sum(
+                abs(t['dia'] - i.data.day) for t in grupo_transacoes for i in grupo_itens
+            )
+            partes = len(grupo_itens) + len(grupo_transacoes)
+            for criterio in ('bruto', 'liquido'):
+                total = sum((Decimal(t[criterio]) for t in grupo_transacoes), Decimal('0.00'))
+                diferenca = total_itens - total
+                if abs(diferenca) > limite:
+                    continue
+                ranking = (abs(diferenca), clientes_distintos, dispersao, partes)
+                if melhor is None or ranking < melhor[0]:
+                    melhor = (ranking, list(grupo_itens), list(grupo_transacoes),
+                              criterio, diferenca)
+    return melhor
+
+
+# Ordem das passadas, da mais confiável para a mais frouxa. Cada tupla é
+# (limite de diferença, quantos lançamentos podem somar, quantas transações podem somar):
+#   1. um para um, valor exato
+#   2. um para um, dentro da tolerância
+#   3. vários lançamentos numa transação só (cliente paga dois serviços de uma vez)
+#   4. um lançamento em várias transações (cliente paga o penteado em parcelas soltas)
+def _passadas(tolerancia):
+    zero = Decimal('0.00')
+    return (
+        (zero, 1, 1),
+        (tolerancia, 1, 1),
+        (tolerancia, MAX_LANCAMENTOS_POR_TRANSACAO, 1),
+        (tolerancia, 1, MAX_TRANSACOES_POR_LANCAMENTO),
+    )
+
+
 def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
-    """Casa lançamentos do sistema com transações do extrato, dentro de um dia.
+    """Casa lançamentos com transações do extrato dentro de um mesmo dia.
 
     O valor lançado no sistema ora é o que o cliente pagou (= bruto do extrato),
     ora é o valor do serviço com a taxa embutida no cartão (= líquido do
-    extrato). Por isso cada passada testa os dois lados:
-
-        1. um lançamento, valor exato (no bruto ou no líquido)
-        2. um lançamento, dentro da tolerância
-        3. vários lançamentos somados fechando uma transação só
-
-    O meio de pagamento é sempre obrigatório: sem isso um Dinheiro de R$ 100,00
-    casaria com um Crédito de R$ 99,91 só porque o valor ficou perto. Quando o
-    meio não bate, o certo é sobrar dos dois lados e aparecer para conferência.
+    extrato), então cada passada testa os dois lados. Sobras dos dois lados
+    voltam explícitas para conferência manual.
     """
-    disponiveis = list(transacoes)
     pendentes = list(lancamentos)
+    disponiveis = list(transacoes)
     pares = []
 
-    def avaliar(total, meio, limite):
-        """Melhor transação disponível para um valor somado, ou None."""
-        melhor = None
-        for transacao in disponiveis:
-            if _normalizar_texto(transacao['meio']) != meio:
-                continue
-            for criterio in ('bruto', 'liquido'):
-                diferenca = total - Decimal(transacao[criterio])
-                if abs(diferenca) <= limite and (melhor is None or abs(diferenca) < melhor[0]):
-                    melhor = (abs(diferenca), transacao, criterio, diferenca)
-        return melhor
-
-    def registrar(grupo, escolha):
-        _, transacao, criterio, diferenca = escolha
-        disponiveis.remove(transacao)
-        for lancamento in grupo:
-            pendentes.remove(lancamento)
-        pares.append(_montar_par(grupo, transacao, criterio, diferenca))
-
-    for limite in (Decimal('0.00'), tolerancia):
-        for lancamento in list(pendentes):
-            escolha = avaliar(lancamento.valor_bruto, _meio_do_lancamento(lancamento), limite)
-            if escolha:
-                registrar([lancamento], escolha)
-
-    # Sobras: tenta fechar uma transação somando lançamentos do mesmo meio.
-    por_meio = defaultdict(list)
-    for lancamento in pendentes:
-        por_meio[_meio_do_lancamento(lancamento)].append(lancamento)
-
-    for meio, grupo_meio in por_meio.items():
-        for tamanho in range(2, MAX_LANCAMENTOS_POR_TRANSACAO + 1):
-            while True:
-                candidatos = [l for l in grupo_meio if l in pendentes]
-                if len(candidatos) < tamanho:
-                    break
-                achou = None
-                for combinacao in combinations(candidatos, tamanho):
-                    total = sum((l.valor_bruto for l in combinacao), Decimal('0.00'))
-                    escolha = avaliar(total, meio, tolerancia)
-                    if escolha and (achou is None or escolha[0] < achou[1][0]):
-                        achou = (list(combinacao), escolha)
-                if achou is None:
-                    break
-                registrar(*achou)
+    for limite, max_itens, max_transacoes in _passadas(tolerancia):
+        while True:
+            melhor = _melhor_casamento(
+                pendentes, disponiveis, limite, max_itens, max_transacoes, dias_distintos=False,
+            )
+            if melhor is None:
+                break
+            _, grupo_itens, grupo_transacoes, criterio, diferenca = melhor
+            for item in grupo_itens:
+                pendentes.remove(item)
+            for transacao in grupo_transacoes:
+                disponiveis.remove(transacao)
+            pares.append(_montar_par(grupo_itens, grupo_transacoes, criterio, diferenca))
 
     pares.sort(key=lambda par: par['lancamentos'][0].id)
     return pares, pendentes, disponiveis
 
 
 def _parear_entre_dias(pendentes_por_dia, disponiveis_por_dia, tolerancia, janela_dias=7):
-    """Fecha transações cujo pagamento não caiu no mesmo dia do atendimento.
+    """Fecha o que não bate dentro do próprio dia.
 
     Um Pix de R$ 200,00 no dia 07 pode cobrir um atendimento do dia 01 e outro
-    do dia 07. Roda só sobre o que sobrou do pareamento diário, exige o mesmo
-    meio de pagamento e limita a distância entre as datas, porque cruzar dias
-    aumenta muito a chance de casar duas coisas parecidas por acaso.
+    do dia 07; um penteado do dia 06 pode ser pago em três Pix espalhados pela
+    semana. Roda só sobre o que sobrou do pareamento diário e limita a
+    distância entre as datas, porque cruzar dias aumenta muito a chance de
+    casar duas coisas parecidas por acaso.
 
-    Devolve os pares encontrados; as listas recebidas são esvaziadas do que foi
-    consumido.
+    Devolve os pares encontrados; as listas recebidas perdem o que foi usado.
     """
-    pares = []
     pendentes = [item for itens in pendentes_por_dia.values() for item in itens]
+    disponiveis = [t for transacoes in disponiveis_por_dia.values() for t in transacoes]
+    pares = []
 
-    for dia_transacao in sorted(disponiveis_por_dia):
-        for transacao in list(disponiveis_por_dia[dia_transacao]):
-            meio = _normalizar_texto(transacao['meio'])
-            candidatos = [
-                item for item in pendentes
-                if _meio_do_lancamento(item) == meio
-                and abs(item.data.day - dia_transacao) <= janela_dias
-            ]
-            achou = None
-            for criterio in ('bruto', 'liquido'):
-                alvo = Decimal(transacao[criterio])
-                for tamanho in range(2, MAX_LANCAMENTOS_POR_TRANSACAO + 1):
-                    if len(candidatos) < tamanho:
-                        break
-                    for combinacao in combinations(candidatos, tamanho):
-                        if len({item.data for item in combinacao}) < 2:
-                            continue  # mesmo dia já foi tentado no pareamento diário
-                        diferenca = sum(
-                            (item.valor_bruto for item in combinacao), Decimal('0.00')
-                        ) - alvo
-                        if abs(diferenca) <= tolerancia and (
-                            achou is None or abs(diferenca) < abs(achou[2])
-                        ):
-                            achou = (list(combinacao), criterio, diferenca)
-            if achou is None:
+    def dentro_da_janela(grupo_itens, grupo_transacoes):
+        dias = [i.data.day for i in grupo_itens] + [t['dia'] for t in grupo_transacoes]
+        return max(dias) - min(dias) <= janela_dias
+
+    for limite, max_itens, max_transacoes in _passadas(tolerancia)[1:]:
+        while True:
+            melhor = _melhor_casamento(
+                pendentes, disponiveis, limite, max_itens, max_transacoes, dias_distintos=True,
+            )
+            if melhor is None:
+                break
+            _, grupo_itens, grupo_transacoes, criterio, diferenca = melhor
+            if not dentro_da_janela(grupo_itens, grupo_transacoes):
+                # Fora da janela não vira par, mas também não pode travar o laço.
+                disponiveis.remove(grupo_transacoes[0])
                 continue
-
-            combinacao, criterio, diferenca = achou
-            disponiveis_por_dia[dia_transacao].remove(transacao)
-            for item in combinacao:
+            for item in grupo_itens:
                 pendentes.remove(item)
                 pendentes_por_dia[item.data.day].remove(item)
-            par = _montar_par(combinacao, transacao, criterio, diferenca)
-            par['entre_dias'] = True
-            par['dia_transacao'] = dia_transacao
+            for transacao in grupo_transacoes:
+                disponiveis.remove(transacao)
+                disponiveis_por_dia[transacao['dia']].remove(transacao)
+            par = _montar_par(grupo_itens, grupo_transacoes, criterio, diferenca, entre_dias=True)
+            # O par aparece no dia em que o dinheiro entrou.
+            par['dia_transacao'] = max(t['dia'] for t in grupo_transacoes)
             pares.append(par)
 
     return pares
@@ -2542,6 +2641,69 @@ def conferencia(request):
                 (ano, mes), _ = competencias.most_common(1)[0]
             return _redirect_conferencia(ano, mes, None)
 
+        if action == 'vincular_manual':
+            chaves = request.POST.getlist('item')
+            identificadores = request.POST.getlist('transacao')
+            if not chaves or not identificadores:
+                messages.error(
+                    request,
+                    'Selecione pelo menos um lançamento e uma transação para vincular.',
+                )
+                return _redirect_conferencia(ano, mes, retorno=retorno)
+
+            itens = []
+            for chave in chaves:
+                tipo, _, bruto_id = chave.partition(':')
+                modelo = {
+                    ItemConferencia.SERVICO: LancamentoSalao,
+                    ItemConferencia.PRODUTO: MovimentoEstoqueSalao,
+                }.get(tipo)
+                if modelo is None or not bruto_id.isdigit():
+                    messages.error(request, 'Seleção inválida.')
+                    return _redirect_conferencia(ano, mes, retorno=retorno)
+                itens.append((tipo, int(bruto_id)))
+
+            grupo = uuid.uuid4()
+            with transaction.atomic():
+                # Refazer um vínculo desfaz por inteiro os grupos que tocam estas
+                # pontas: apagar só a linha que colide deixaria o resto do grupo
+                # antigo órfão, virando um vínculo sem lançamento.
+                colisao = (
+                    Q(identificador__in=identificadores)
+                    | Q(lancamento_id__in=[i for t, i in itens if t == ItemConferencia.SERVICO])
+                    | Q(movimento_id__in=[i for t, i in itens if t == ItemConferencia.PRODUTO])
+                )
+                grupos_afetados = list(
+                    ConciliacaoManualSalao.objects.filter(colisao)
+                    .values_list('grupo', flat=True)
+                )
+                ConciliacaoManualSalao.objects.filter(grupo__in=grupos_afetados).delete()
+                ConciliacaoManualSalao.objects.bulk_create([
+                    ConciliacaoManualSalao(grupo=grupo, identificador=identificador)
+                    for identificador in identificadores
+                ] + [
+                    ConciliacaoManualSalao(
+                        grupo=grupo,
+                        lancamento_id=item_id if tipo == ItemConferencia.SERVICO else None,
+                        movimento_id=item_id if tipo == ItemConferencia.PRODUTO else None,
+                    )
+                    for tipo, item_id in itens
+                ])
+            messages.success(
+                request,
+                f'Vínculo criado: {len(itens)} lançamento(s) com '
+                f'{len(identificadores)} pagamento(s).',
+            )
+            return _redirect_conferencia(ano, mes, retorno=retorno)
+
+        if action == 'desvincular_manual':
+            removidos, _ = ConciliacaoManualSalao.objects.filter(
+                grupo=request.POST.get('grupo') or None,
+            ).delete()
+            if removidos:
+                messages.success(request, 'Vínculo desfeito.')
+            return _redirect_conferencia(ano, mes, retorno=retorno)
+
         if action == 'ignorar_transacao':
             identificador = (request.POST.get('identificador') or '').strip()
             if identificador:
@@ -2596,13 +2758,27 @@ def conferencia(request):
     # Serviços e vendas de produto caem no mesmo extrato, então conferem juntos.
     itens_mes = _itens_conferencia_do_mes(ano, mes)
 
+    # O que o usuário amarrou à mão sai do pool do palpite, mas continua contando
+    # nos totais e no progresso da conferência do dia.
+    pares_manuais, itens_para_parear, transacoes_para_parear = _aplicar_conciliacoes_manuais(
+        itens_mes, transacoes_aprovadas,
+    )
+
     transacoes_por_dia = defaultdict(list)
-    for transacao in transacoes_aprovadas:
+    for transacao in transacoes_para_parear:
         transacoes_por_dia[transacao['dia']].append(transacao)
 
     itens_por_dia = defaultdict(list)
-    for item in itens_mes:
+    for item in itens_para_parear:
         itens_por_dia[item.data.day].append(item)
+
+    # Totais do dia usam tudo, inclusive o que já está vinculado à mão.
+    todos_itens_por_dia = defaultdict(list)
+    for item in itens_mes:
+        todos_itens_por_dia[item.data.day].append(item)
+    todas_transacoes_por_dia = defaultdict(list)
+    for transacao in transacoes_aprovadas:
+        todas_transacoes_por_dia[transacao['dia']].append(transacao)
 
     # Passada 1: cada dia contra as transações do próprio dia.
     resultado_por_dia = {}
@@ -2617,11 +2793,7 @@ def conferencia(request):
             transacoes_por_dia.get(dia, []),
             tolerancia=tolerancia,
         )
-        resultado_por_dia[dia] = {
-            'pares': pares,
-            'permutas': [i for i in do_dia if i.permuta],
-            'conciliaveis': conciliaveis,
-        }
+        resultado_por_dia[dia] = {'pares': pares}
         pendentes_por_dia[dia] = sem_par_sistema
         disponiveis_por_dia[dia] = sem_par_extrato
 
@@ -2629,7 +2801,17 @@ def conferencia(request):
     for par in _parear_entre_dias(pendentes_por_dia, disponiveis_por_dia, tolerancia):
         resultado_por_dia[par['dia_transacao']]['pares'].append(par)
 
-    dias = sorted(resultado_por_dia)
+    for par in pares_manuais:
+        dia = par['dia_transacao']
+        resultado_por_dia.setdefault(dia, {'pares': []})['pares'].append(par)
+        pendentes_por_dia.setdefault(dia, [])
+        disponiveis_por_dia.setdefault(dia, [])
+
+    dias = sorted(set(resultado_por_dia) | set(todos_itens_por_dia) | set(todas_transacoes_por_dia))
+    for dia in dias:
+        resultado_por_dia.setdefault(dia, {'pares': []})
+        pendentes_por_dia.setdefault(dia, [])
+        disponiveis_por_dia.setdefault(dia, [])
     if dia_filtro is not None:
         dias = [d for d in dias if d == dia_filtro]
 
@@ -2643,13 +2825,15 @@ def conferencia(request):
 
     for dia in dias:
         resultado = resultado_por_dia[dia]
-        do_dia = itens_por_dia.get(dia, [])
+        do_dia = todos_itens_por_dia.get(dia, [])
         sem_par_sistema = pendentes_por_dia[dia]
         sem_par_extrato = disponiveis_por_dia[dia]
 
-        soma_sistema = sum((i.valor_bruto for i in resultado['conciliaveis']), Decimal('0.00'))
+        soma_sistema = sum(
+            (i.valor_bruto for i in do_dia if not i.permuta), Decimal('0.00'),
+        )
         soma_extrato = sum(
-            (Decimal(t['bruto']) for t in transacoes_por_dia.get(dia, [])),
+            (Decimal(t['bruto']) for t in todas_transacoes_por_dia.get(dia, [])),
             Decimal('0.00'),
         )
         conferidos_dia = sum(1 for i in do_dia if i.conferido)
@@ -2680,7 +2864,7 @@ def conferencia(request):
             'pares': sorted(resultado['pares'], key=lambda p: p['lancamentos'][0].data),
             'sem_par_sistema': sem_par_sistema,
             'sem_par_extrato': sem_par_extrato,
-            'permutas': resultado['permutas'],
+            'permutas': [i for i in do_dia if i.permuta],
             'quantidade': len(do_dia),
             'conferidos': conferidos_dia,
             'pendentes': len(do_dia) - conferidos_dia,

@@ -21,6 +21,7 @@ from .models import (
     ServicoSalao,
     SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
+    ConciliacaoManualSalao,
     TransacaoIgnoradaSalao,
 )
 from .views import (
@@ -665,6 +666,217 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertNotIn('dia=', response['Location'])
         self.assertIn('ano=2026&mes=3', response['Location'])
+
+    CSV_NATHALIA = (
+        'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+        'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+        'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+        '06/03/2026 21:47,Pix,Pix,À Vista,Conta Inteligente,\'-,TXA,Aprovada,'
+        '"50,00","50,00","0,00",0,Outro,S1,Nathália Louise Priebe\n'
+        '08/03/2026 14:13,Pix,Pix,À Vista,Maquininha,\'-,TXB,Aprovada,'
+        '"150,00","150,00","0,00",0,Outro,S2,NATHALIA LOUISE PRIEBE\n'
+        '08/03/2026 19:59,Pix,Pix,À Vista,Maquininha,\'-,TXC,Aprovada,'
+        '"50,00","50,00","0,00",0,Outro,S3,NATHALIA LOUISE PRIEBE\n'
+        # mesma soma, outra cliente: é o que fazia o automático errar
+        '07/03/2026 07:16,Pix,Pix,À Vista,Maquininha,\'-,TXD,Aprovada,'
+        '"200,00","200,00","0,00",0,Outro,S4,Ana Luisa Macedo\n'
+        '01/03/2026 10:40,Pix,Pix,À Vista,Conta Inteligente,\'-,TXE,Aprovada,'
+        '"50,00","50,00","0,00",0,Outro,S5,NEIVA TERESINHA MARQUES\n'
+    )
+
+    def test_conferencia_vinculo_manual_manda_no_pareamento(self):
+        """O usuário amarra as 3 transações da Nathália; o palpite não decide."""
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'vincular_manual',
+                'ano': 2026, 'mes': 3,
+                'item': [f'servico:{penteado.id}'],
+                'transacao': ['TXA', 'TXB', 'TXC'],
+                'retorno': 'ano=2026&mes=3',
+            },
+        )
+        self.assertEqual(ConciliacaoManualSalao.objects.count(), 4)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        manuais = [p for d in response.context['dias'] for p in d['pares'] if p['manual']]
+        self.assertEqual(len(manuais), 1)
+        par = manuais[0]
+        self.assertEqual([l.id for l in par['lancamentos']], [penteado.id])
+        self.assertEqual(
+            {t['identificador'] for t in par['transacoes']}, {'TXA', 'TXB', 'TXC'},
+        )
+        self.assertEqual(par['total_recebido'], Decimal('250.00'))
+        self.assertEqual(par['diferenca_valor'], Decimal('0.00'))
+        # as outras seguem sobrando, sem terem sido consumidas por engano
+        sobras = {
+            t['identificador']
+            for d in response.context['dias'] for t in d['sem_par_extrato']
+        }
+        self.assertEqual(sobras, {'TXD', 'TXE'})
+
+    def test_conferencia_desfazer_vinculo_manual(self):
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+        self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+                'item': [f'servico:{penteado.id}'], 'transacao': ['TXA', 'TXB', 'TXC'],
+            },
+        )
+        grupo = ConciliacaoManualSalao.objects.first().grupo
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'desvincular_manual', 'ano': 2026, 'mes': 3, 'grupo': str(grupo)},
+        )
+        self.assertEqual(ConciliacaoManualSalao.objects.count(), 0)
+
+    def test_conferencia_revincular_desfaz_o_vinculo_anterior(self):
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+        vincular = lambda transacoes: self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+                'item': [f'servico:{penteado.id}'], 'transacao': transacoes,
+            },
+        )
+        vincular(['TXA', 'TXB', 'TXC'])
+        vincular(['TXD'])
+
+        # o lançamento não pode ficar em dois grupos
+        self.assertEqual(
+            ConciliacaoManualSalao.objects.filter(lancamento=penteado).count(), 1,
+        )
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        manuais = [p for d in response.context['dias'] for p in d['pares'] if p['manual']]
+        self.assertEqual(len(manuais), 1)
+        self.assertEqual(
+            {t['identificador'] for t in manuais[0]['transacoes']}, {'TXD'},
+        )
+
+    def test_conferencia_vinculo_manual_exige_os_dois_lados(self):
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{penteado.id}']},
+        )
+        self.assertEqual(ConciliacaoManualSalao.objects.count(), 0)
+
+    def test_conferencia_vinculo_manual_com_diferenca_de_valor_e_mantido(self):
+        """Vincular não exige que feche: a diferença fica visível na linha."""
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{penteado.id}'], 'transacao': ['TXA']},
+        )
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        par = [p for d in response.context['dias'] for p in d['pares'] if p['manual']][0]
+        self.assertEqual(par['total_recebido'], Decimal('50.00'))
+        self.assertEqual(par['diferenca_valor'], Decimal('200.00'))
+
+    def test_conferencia_um_lancamento_pago_em_varias_transacoes(self):
+        """Penteado de R$ 250,00 pago em 50 + 150 + 50, espalhados em dois dias."""
+        self._login()
+        csv_parcelado = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '06/03/2026 21:47,Pix,Pix,À Vista,Conta Inteligente,\'-,TXA,Aprovada,'
+            '"50,00","50,00","0,00",0,Outro,S1,Nathalia\n'
+            '08/03/2026 14:13,Pix,Pix,À Vista,Maquininha,\'-,TXB,Aprovada,'
+            '"150,00","150,00","0,00",0,Outro,S2,NATHALIA\n'
+            '08/03/2026 19:59,Pix,Pix,À Vista,Maquininha,\'-,TXC,Aprovada,'
+            '"50,00","50,00","0,00",0,Outro,S3,NATHALIA\n'
+        )
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(csv_parcelado)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        pares = [p for d in response.context['dias'] for p in d['pares']]
+        self.assertEqual(len(pares), 1)
+        par = pares[0]
+        self.assertTrue(par['parcelado'])
+        self.assertTrue(par['entre_dias'])
+        self.assertEqual([l.id for l in par['lancamentos']], [penteado.id])
+        self.assertEqual(
+            {t['identificador'] for t in par['transacoes']}, {'TXA', 'TXB', 'TXC'},
+        )
+        self.assertEqual(par['total_recebido'], Decimal('250.00'))
+        self.assertEqual(response.context['resumo']['sem_par_extrato'], 0)
+        self.assertEqual(response.context['resumo']['sem_par_sistema'], 0)
+
+    def test_conferencia_pagamento_em_parcelas_no_mesmo_dia(self):
+        self._login()
+        csv_duas = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '06/03/2026 10:00,Pix,Pix,À Vista,Maquininha,\'-,TXA,Aprovada,'
+            '"90,00","90,00","0,00",0,Outro,S1,Cliente\n'
+            '06/03/2026 18:00,Pix,Pix,À Vista,Maquininha,\'-,TXB,Aprovada,'
+            '"60,00","60,00","0,00",0,Outro,S2,Cliente\n'
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('150.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(csv_duas)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        par = response.context['dias'][0]['pares'][0]
+        self.assertTrue(par['parcelado'])
+        self.assertFalse(par['entre_dias'])
+        self.assertEqual(par['total_recebido'], Decimal('150.00'))
+
+    def test_conferencia_nao_soma_transacoes_de_meios_diferentes(self):
+        self._login()
+        csv_misto = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '06/03/2026 10:00,Pix,Pix,À Vista,Maquininha,\'-,TXA,Aprovada,'
+            '"90,00","90,00","0,00",0,Outro,S1,Cliente\n'
+            '06/03/2026 18:00,Débito,visa,À Vista,Maquininha,\'-,TXB,Aprovada,'
+            '"60,00","60,00","0,00",0,Outro,S2,Cliente\n'
+        )
+        self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('150.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(csv_misto)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertEqual(dia['pares'], [])
+        self.assertEqual(len(dia['sem_par_sistema']), 1)
+        self.assertEqual(len(dia['sem_par_extrato']), 2)
 
     def test_conferencia_soma_lancamentos_para_fechar_uma_transacao(self):
         """Cliente paga R$ 290,00 numa passada só, cobrindo dois serviços."""

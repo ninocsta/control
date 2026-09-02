@@ -517,3 +517,51 @@ class TransacaoIgnoradaSalao(models.Model):
 
     def __str__(self):
         return self.referencia or self.identificador
+
+
+class ConciliacaoManualSalao(models.Model):
+    """Vínculo feito à mão entre itens do salão e transações do extrato.
+
+    O pareamento automático erra quando várias combinações somam o mesmo valor
+    — três Pix da mesma cliente ou um Pix de outra pessoa fecham igual. Aqui
+    quem sabe é o usuário, e o que ele amarra tem prioridade sobre o palpite.
+
+    Cada linha é uma ponta do vínculo (uma transação, um lançamento ou uma
+    venda de produto) e `grupo` amarra as pontas de um mesmo pagamento.
+    """
+
+    grupo = models.UUIDField(db_index=True)
+    identificador = models.CharField(max_length=120, null=True, blank=True, unique=True)
+    lancamento = models.OneToOneField(
+        LancamentoSalao,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='conciliacao_manual',
+    )
+    movimento = models.OneToOneField(
+        MovimentoEstoqueSalao,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='conciliacao_manual',
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Conciliação Manual do Salão'
+        verbose_name_plural = 'Conciliações Manuais do Salão'
+        ordering = ['grupo', 'id']
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(identificador__isnull=False, lancamento__isnull=True, movimento__isnull=True)
+                    | models.Q(identificador__isnull=True, lancamento__isnull=False, movimento__isnull=True)
+                    | models.Q(identificador__isnull=True, lancamento__isnull=True, movimento__isnull=False)
+                ),
+                name='conciliacao_manual_uma_ponta_por_linha',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.grupo} - {self.identificador or self.lancamento_id or self.movimento_id}'
