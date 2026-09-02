@@ -766,7 +766,7 @@ def _combinacoes_ate(sequencia, maximo):
         yield from combinations(sequencia, tamanho)
 
 
-def _melhor_casamento(itens, transacoes, limite, max_itens, max_transacoes, dias_distintos):
+def _melhor_casamento(itens, transacoes, limite, max_itens, max_transacoes):
     """Melhor casamento possível, ou None.
 
     Só um dos lados combina de cada vez (`max_itens` ou `max_transacoes` é 1):
@@ -784,25 +784,17 @@ def _melhor_casamento(itens, transacoes, limite, max_itens, max_transacoes, dias
         for grupo_transacoes in _combinacoes_ate(transacoes, max_transacoes):
             if any(_normalizar_texto(t['meio']) != meio for t in grupo_transacoes):
                 continue
-            if dias_distintos:
-                datas = {i.data.day for i in grupo_itens} | {t['dia'] for t in grupo_transacoes}
-                if len(datas) < 2:
-                    continue  # já foi tentado no pareamento do próprio dia
-            # Muitas combinações somam o mesmo valor. O desempate, em ordem: pagamentos
-            # do mesmo cliente (o extrato traz o nome), depois os mais próximos da data
-            # do atendimento, depois os que usam menos partes.
+            # Várias combinações somam o mesmo valor. Desempata quem tem o nome de
+            # um cliente só (o extrato traz o nome) e, depois, quem usa menos partes.
             nomes = {_normalizar_texto(t['nome']) for t in grupo_transacoes if t['nome'].strip()}
             clientes_distintos = max(len(nomes) - 1, 0)
-            dispersao = sum(
-                abs(t['dia'] - i.data.day) for t in grupo_transacoes for i in grupo_itens
-            )
             partes = len(grupo_itens) + len(grupo_transacoes)
             for criterio in ('bruto', 'liquido'):
                 total = sum((Decimal(t[criterio]) for t in grupo_transacoes), Decimal('0.00'))
                 diferenca = total_itens - total
                 if abs(diferenca) > limite:
                     continue
-                ranking = (abs(diferenca), clientes_distintos, dispersao, partes)
+                ranking = (abs(diferenca), clientes_distintos, partes)
                 if melhor is None or ranking < melhor[0]:
                     melhor = (ranking, list(grupo_itens), list(grupo_transacoes),
                               criterio, diferenca)
@@ -840,7 +832,7 @@ def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
     for limite, max_itens, max_transacoes in _passadas(tolerancia):
         while True:
             melhor = _melhor_casamento(
-                pendentes, disponiveis, limite, max_itens, max_transacoes, dias_distintos=False,
+                pendentes, disponiveis, limite, max_itens, max_transacoes,
             )
             if melhor is None:
                 break
@@ -853,51 +845,6 @@ def _parear_dia(lancamentos, transacoes, tolerancia=Decimal('1.00')):
 
     pares.sort(key=lambda par: par['lancamentos'][0].id)
     return pares, pendentes, disponiveis
-
-
-def _parear_entre_dias(pendentes_por_dia, disponiveis_por_dia, tolerancia, janela_dias=7):
-    """Fecha o que não bate dentro do próprio dia.
-
-    Um Pix de R$ 200,00 no dia 07 pode cobrir um atendimento do dia 01 e outro
-    do dia 07; um penteado do dia 06 pode ser pago em três Pix espalhados pela
-    semana. Roda só sobre o que sobrou do pareamento diário e limita a
-    distância entre as datas, porque cruzar dias aumenta muito a chance de
-    casar duas coisas parecidas por acaso.
-
-    Devolve os pares encontrados; as listas recebidas perdem o que foi usado.
-    """
-    pendentes = [item for itens in pendentes_por_dia.values() for item in itens]
-    disponiveis = [t for transacoes in disponiveis_por_dia.values() for t in transacoes]
-    pares = []
-
-    def dentro_da_janela(grupo_itens, grupo_transacoes):
-        dias = [i.data.day for i in grupo_itens] + [t['dia'] for t in grupo_transacoes]
-        return max(dias) - min(dias) <= janela_dias
-
-    for limite, max_itens, max_transacoes in _passadas(tolerancia)[1:]:
-        while True:
-            melhor = _melhor_casamento(
-                pendentes, disponiveis, limite, max_itens, max_transacoes, dias_distintos=True,
-            )
-            if melhor is None:
-                break
-            _, grupo_itens, grupo_transacoes, criterio, diferenca = melhor
-            if not dentro_da_janela(grupo_itens, grupo_transacoes):
-                # Fora da janela não vira par, mas também não pode travar o laço.
-                disponiveis.remove(grupo_transacoes[0])
-                continue
-            for item in grupo_itens:
-                pendentes.remove(item)
-                pendentes_por_dia[item.data.day].remove(item)
-            for transacao in grupo_transacoes:
-                disponiveis.remove(transacao)
-                disponiveis_por_dia[transacao['dia']].remove(transacao)
-            par = _montar_par(grupo_itens, grupo_transacoes, criterio, diferenca, entre_dias=True)
-            # O par aparece no dia em que o dinheiro entrou.
-            par['dia_transacao'] = max(t['dia'] for t in grupo_transacoes)
-            pares.append(par)
-
-    return pares
 
 
 def _resumo_lancamentos_por_competencia(ano, mes, dia):
@@ -2806,7 +2753,6 @@ def conferencia(request):
     for transacao in transacoes_aprovadas:
         todas_transacoes_por_dia[transacao['dia']].append(transacao)
 
-    # Passada 1: cada dia contra as transações do próprio dia.
     resultado_por_dia = {}
     pendentes_por_dia = defaultdict(list)
     disponiveis_por_dia = defaultdict(list)
@@ -2824,10 +2770,9 @@ def conferencia(request):
         pendentes_por_dia[dia] = sem_par_sistema
         disponiveis_por_dia[dia] = sem_par_extrato
 
-    # Passada 2: sobras que só fecham cruzando dias (pagamento junto de dois atendimentos).
-    for par in _parear_entre_dias(pendentes_por_dia, disponiveis_por_dia, tolerancia):
-        resultado_por_dia[par['dia_transacao']]['pares'].append(par)
-
+    # Nada de juntar sozinho o que caiu em dias diferentes: valores iguais se
+    # repetem demais e o palpite acabava amarrando pagamentos de outra cliente.
+    # O que não fecha no próprio dia sobra para o vínculo manual.
     for par in pares_manuais:
         dia = par['dia_transacao']
         resultado_por_dia.setdefault(dia, {'pares': []})['pares'].append(par)

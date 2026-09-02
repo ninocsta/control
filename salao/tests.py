@@ -580,8 +580,8 @@ class SalaoViewsTests(TestCase):
         )
         self.assertEqual(par['total_lancado'], Decimal('564.56'))
 
-    def test_conferencia_concilia_pagamento_que_cobre_dias_diferentes(self):
-        """Pix de R$ 200,00 no dia 07 cobrindo atendimentos do dia 01 e do dia 07."""
+    def test_conferencia_nao_junta_sozinha_pagamentos_de_dias_diferentes(self):
+        """Entre dias há combinações demais que somam igual: fica para o manual."""
         self._login()
         csv_200 = (
             'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
@@ -600,36 +600,23 @@ class SalaoViewsTests(TestCase):
 
         response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
         dias = {d['dia']: d for d in response.context['dias']}
-        # o par aparece no dia em que o dinheiro entrou
-        par = dias[7]['pares'][0]
-        self.assertTrue(par['entre_dias'])
-        self.assertEqual(
-            {i.id for i in par['lancamentos']}, {dia01.id, dia07.id},
-        )
-        self.assertEqual(dias[1]['sem_par_sistema'], [])
-        self.assertEqual(dias[7]['sem_par_extrato'], [])
+        self.assertEqual(dias[1]['pares'], [])
+        self.assertEqual(dias[7]['pares'], [])
+        self.assertEqual([i.id for i in dias[1]['sem_par_sistema']], [dia01.id])
+        self.assertEqual([i.id for i in dias[7]['sem_par_sistema']], [dia07.id])
+        self.assertEqual([t['identificador'] for t in dias[7]['sem_par_extrato']], ['TX200'])
 
-    def test_conferencia_nao_cruza_dias_alem_da_janela(self):
-        self._login()
-        csv_200 = (
-            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
-            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
-            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
-            '25/03/2026 07:16,Pix,Pix,À Vista,Maquininha,\'-,TX200,Aprovada,'
-            '"200,00","200,00","0,00",0,Outro,S13,Ana\n'
+        # e o vínculo manual resolve
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{dia01.id}', f'servico:{dia07.id}'],
+             'transacao': ['TX200']},
         )
-        self._create_lancamento(
-            data=date(2026, 3, 1), valor_bruto=Decimal('100.00'), forma_pagamento=self.forma_pix,
-        )
-        self._create_lancamento(
-            data=date(2026, 3, 25), valor_bruto=Decimal('100.00'), forma_pagamento=self.forma_pix,
-        )
-        self._importar_extrato(csv_200)
-
         response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
-        dias = {d['dia']: d for d in response.context['dias']}
-        self.assertEqual(dias[25]['pares'], [])
-        self.assertEqual(len(dias[25]['sem_par_extrato']), 1)
+        par = [p for d in response.context['dias'] for p in d['pares'] if p['manual']][0]
+        self.assertEqual({i.id for i in par['lancamentos']}, {dia01.id, dia07.id})
+        self.assertEqual(par['diferenca_valor'], Decimal('0.00'))
 
     def test_conferencia_marca_venda_de_produto_como_conferida(self):
         self._login()
@@ -930,8 +917,8 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(par['total_recebido'], Decimal('50.00'))
         self.assertEqual(par['diferenca_valor'], Decimal('200.00'))
 
-    def test_conferencia_um_lancamento_pago_em_varias_transacoes(self):
-        """Penteado de R$ 250,00 pago em 50 + 150 + 50, espalhados em dois dias."""
+    def test_conferencia_nao_junta_sozinha_parcelas_de_dias_diferentes(self):
+        """Penteado de R$ 250,00 pago em 50 + 150 + 50 espalhados: sobra para o manual."""
         self._login()
         csv_parcelado = (
             'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
@@ -950,18 +937,10 @@ class SalaoViewsTests(TestCase):
         self._importar_extrato(csv_parcelado)
 
         response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
-        pares = [p for d in response.context['dias'] for p in d['pares']]
-        self.assertEqual(len(pares), 1)
-        par = pares[0]
-        self.assertTrue(par['parcelado'])
-        self.assertTrue(par['entre_dias'])
-        self.assertEqual([l.id for l in par['lancamentos']], [penteado.id])
-        self.assertEqual(
-            {t['identificador'] for t in par['transacoes']}, {'TXA', 'TXB', 'TXC'},
-        )
-        self.assertEqual(par['total_recebido'], Decimal('250.00'))
-        self.assertEqual(response.context['resumo']['sem_par_extrato'], 0)
-        self.assertEqual(response.context['resumo']['sem_par_sistema'], 0)
+        self.assertEqual([p for d in response.context['dias'] for p in d['pares']], [])
+        self.assertEqual(response.context['resumo']['sem_par_sistema'], 1)
+        self.assertEqual(response.context['resumo']['sem_par_extrato'], 3)
+        self.assertEqual(penteado.valor_bruto, Decimal('250.00'))
 
     def test_conferencia_pagamento_em_parcelas_no_mesmo_dia(self):
         self._login()
