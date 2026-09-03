@@ -509,7 +509,7 @@ class TransacaoIgnoradaSalao(models.Model):
     do CSV continue ignorando o mesmo recebimento.
     """
 
-    identificador = models.CharField(max_length=120, unique=True)
+    identificador = models.CharField(max_length=140, unique=True)
     referencia = models.CharField(max_length=200, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
@@ -534,7 +534,7 @@ class ConciliacaoManualSalao(models.Model):
     """
 
     grupo = models.UUIDField(db_index=True)
-    identificador = models.CharField(max_length=120, null=True, blank=True, unique=True)
+    identificador = models.CharField(max_length=140, null=True, blank=True, unique=True)
     lancamento = models.OneToOneField(
         LancamentoSalao,
         on_delete=models.CASCADE,
@@ -568,3 +568,30 @@ class ConciliacaoManualSalao(models.Model):
 
     def __str__(self):
         return f'{self.grupo} - {self.identificador or self.lancamento_id or self.movimento_id}'
+
+
+class TransacaoDivididaSalao(models.Model):
+    """Uma transação do extrato quebrada em partes.
+
+    Um Pix só costuma pagar mais de uma coisa — cabelo e maquiagem na mesma
+    passada. Dividido, cada pedaço casa (ou vira "fora do salão") por conta
+    própria, e o total do dia não muda: as partes somam o valor original.
+    """
+
+    identificador_origem = models.CharField(max_length=140, db_index=True)
+    identificador = models.CharField(max_length=140, unique=True)
+    valor_bruto = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+    )
+    descricao = models.CharField(max_length=120, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Divisão de Transação do Salão'
+        verbose_name_plural = 'Divisões de Transação do Salão'
+        ordering = ['identificador_origem', 'id']
+
+    def __str__(self):
+        return f'{self.identificador} - R$ {self.valor_bruto}'

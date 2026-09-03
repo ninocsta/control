@@ -300,7 +300,13 @@
                        {% if lancamento.conferido %}checked{% endif %}>
                 {% endfor %}
             </div>
-            <div class="conf-coluna"></div>
+            <div class="conf-coluna">
+                {% for lancamento in par.lancamentos %}
+                <input class="form-check-input conf-sel js-selecao" type="checkbox"
+                       data-tipo="item" value="{{ lancamento.chave }}"
+                       title="Selecionar para vincular manualmente">
+                {% endfor %}
+            </div>
             <div class="conf-lado">
                 {% for lancamento in par.lancamentos %}
                 <div{% if not forloop.first %} class="mt-1 pt-1 border-top"{% endif %}>
@@ -324,6 +330,9 @@
             <div class="conf-lado conf-lado-extrato">
                 {% for transacao in par.transacoes %}
                 <div{% if not forloop.first %} class="mt-1 pt-1 border-top"{% endif %}>
+                    <input class="form-check-input conf-sel js-selecao" type="checkbox"
+                           data-tipo="transacao" value="{{ transacao.identificador }}"
+                           title="Selecionar para vincular manualmente">
                     <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-t-{{ transacao.identificador }}">R$ {{ transacao.bruto }}</span>
                     {% if par.entre_dias %}<span class="badge text-bg-warning">{{ transacao.dia|stringformat:'02d' }}/{{ mes|stringformat:'02d' }}</span>{% endif %}
                     <div class="conf-sub">
@@ -331,7 +340,7 @@
                         {{ transacao.parcelas }}x · líquido R$ {{ transacao.liquido }} · taxa {{ transacao.taxa_percentual }}%
                         {% if par.taxa_divergente %}<span class="text-warning-emphasis">(cadastro difere {{ par.diferenca_taxa }} p.p.)</span>{% endif %}
                     </div>
-                    {% include 'salao/partials/conferencia_ignorar.html' with transacao=transacao %}
+                    {% include 'salao/partials/conferencia_transacao_acoes.html' with transacao=transacao %}
                 </div>
                 {% endfor %}
                 <div class="conf-sub mt-1">
@@ -449,7 +458,7 @@
                     {{ transacao.hora }} · {{ transacao.meio }} · {{ transacao.origem }}
                     {% if transacao.nome %} · {{ transacao.nome }}{% endif %}
                 </div>
-                {% include 'salao/partials/conferencia_ignorar.html' with transacao=transacao dia=item.dia %}
+                {% include 'salao/partials/conferencia_transacao_acoes.html' with transacao=transacao dia=item.dia %}
             </div>
         </div>
         {% endfor %}

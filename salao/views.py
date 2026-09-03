@@ -38,6 +38,7 @@ from .models import (
     SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
     ConciliacaoManualSalao,
+    TransacaoDivididaSalao,
     TransacaoIgnoradaSalao,
 )
 
@@ -758,6 +759,116 @@ def _aplicar_conciliacoes_manuais(itens, transacoes):
         pares,
         [i for i in itens if i.chave not in usados_itens],
         [t for t in transacoes if t['identificador'] not in usados_transacoes],
+    )
+
+
+def _expandir_divisoes(transacoes):
+    """Troca cada transação dividida pelas suas partes.
+
+    As partes somam o bruto original, então nenhum total do dia muda. O líquido
+    é rateado na proporção do bruto e a sobra de centavo fica na última parte.
+    """
+    if not transacoes:
+        return transacoes
+
+    partes_por_origem = defaultdict(list)
+    for parte in TransacaoDivididaSalao.objects.filter(
+        identificador_origem__in=[t['identificador'] for t in transacoes]
+    ):
+        partes_por_origem[parte.identificador_origem].append(parte)
+    if not partes_por_origem:
+        return transacoes
+
+    expandidas = []
+    for transacao in transacoes:
+        partes = partes_por_origem.get(transacao['identificador'])
+        if not partes:
+            expandidas.append(transacao)
+            continue
+        bruto = Decimal(transacao['bruto'])
+        liquido_restante = Decimal(transacao['liquido'])
+        for indice, parte in enumerate(partes, start=1):
+            fatia = dict(transacao)
+            fatia['identificador'] = parte.identificador
+            fatia['bruto'] = str(parte.valor_bruto)
+            if indice == len(partes):
+                fatia['liquido'] = str(liquido_restante)
+            else:
+                rateio = (
+                    _quantize_money(Decimal(transacao['liquido']) * parte.valor_bruto / bruto)
+                    if bruto else Decimal('0.00')
+                )
+                liquido_restante -= rateio
+                fatia['liquido'] = str(rateio)
+            fatia['dividida_de'] = transacao['identificador']
+            fatia['parte'] = f'{indice}/{len(partes)}'
+            fatia['descricao_parte'] = parte.descricao
+            expandidas.append(fatia)
+    return expandidas
+
+
+def _limpar_vinculos_de_transacoes(identificadores):
+    """Solta o que apontava para transações que vão deixar de existir.
+
+    Um grupo manual sem a transação vira vínculo órfão, e um id ignorado que
+    ninguém mais mostra some da tela sem jeito de voltar atrás.
+    """
+    grupos = list(
+        ConciliacaoManualSalao.objects.filter(identificador__in=identificadores)
+        .values_list('grupo', flat=True)
+    )
+    ConciliacaoManualSalao.objects.filter(grupo__in=grupos).delete()
+    TransacaoIgnoradaSalao.objects.filter(identificador__in=identificadores).delete()
+
+
+def _parse_partes_divisao(raw_valores, bruto):
+    """Lê os valores das partes; o que faltar para o bruto vira a última parte.
+
+    Aceita "150" (o resto vira a segunda parte) e "150; 205" (partes explícitas),
+    sempre separando por espaço ou ponto e vírgula — a vírgula é decimal.
+    """
+    valores = []
+    for pedaco in re.split(r'[;\s]+', (raw_valores or '').strip()):
+        if not pedaco:
+            continue
+        valor = _parse_decimal(pedaco)
+        if valor is None or valor <= Decimal('0.00'):
+            return None, 'Informe valores maiores que zero para as partes.'
+        valores.append(valor)
+    if not valores:
+        return None, 'Informe o valor da parte que fecha com o lançamento.'
+
+    total = sum(valores, Decimal('0.00'))
+    if total > bruto:
+        return None, f'As partes somam R$ {total} e a transação tem R$ {bruto}.'
+    if total < bruto:
+        valores.append(bruto - total)
+    if len(valores) < 2:
+        return None, 'Divida em pelo menos duas partes.'
+    return valores, None
+
+
+def _itens_vinculados_ao_dia(transacoes, ano, mes, dia):
+    """Lançamentos e vendas amarrados à mão a alguma transação deste dia.
+
+    O atendimento pago noutro dia aparece na linha do dia do pagamento, então
+    "conferir o dia todo" precisa alcançá-lo — senão ele fica de fora para
+    sempre do contador do dia em que está sendo mostrado.
+    """
+    identificadores = [
+        t['identificador'] for t in transacoes
+        if (t['ano'], t['mes'], t['dia']) == (ano, mes, dia)
+    ]
+    if not identificadores:
+        return [], []
+    grupos = list(
+        ConciliacaoManualSalao.objects.filter(identificador__in=identificadores)
+        .values_list('grupo', flat=True)
+    )
+    pontas = ConciliacaoManualSalao.objects.filter(grupo__in=grupos)
+    return (
+        [v.lancamento_id for v in pontas if v.lancamento_id],
+        [v.movimento_id for v in pontas if v.movimento_id],
     )
 
 
@@ -2569,11 +2680,15 @@ def conferencia(request):
                 'conferido_em': timezone.now() if marcar else None,
             }
             data_alvo = date(ano, mes, dia)
+            lancamentos_vinculados, movimentos_vinculados = _itens_vinculados_ao_dia(
+                _expandir_divisoes(request.session.get(CONFERENCIA_SESSION_KEY) or []),
+                ano, mes, dia,
+            )
             atualizados = LancamentoSalao.objects.filter(
-                data=data_alvo, conferido=not marcar,
+                Q(data=data_alvo) | Q(id__in=lancamentos_vinculados), conferido=not marcar,
             ).update(**valores)
             atualizados += MovimentoEstoqueSalao.objects.filter(
-                data=data_alvo,
+                Q(data=data_alvo) | Q(id__in=movimentos_vinculados),
                 tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
                 motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
                 conferido=not marcar,
@@ -2677,6 +2792,62 @@ def conferencia(request):
                 messages.success(request, 'Vínculo desfeito.')
             return _redirect_conferencia(ano, mes, retorno=retorno)
 
+        if action == 'dividir_transacao':
+            identificador = (request.POST.get('identificador') or '').strip()
+            transacao = next(
+                (
+                    t for t in (request.session.get(CONFERENCIA_SESSION_KEY) or [])
+                    if t['identificador'] == identificador
+                ),
+                None,
+            )
+            if transacao is None:
+                messages.error(request, 'Transação não encontrada no extrato carregado.')
+                return _redirect_conferencia(ano, mes, retorno=retorno)
+
+            bruto = Decimal(transacao['bruto'])
+            valores, erro = _parse_partes_divisao(request.POST.get('valores'), bruto)
+            if erro:
+                messages.error(request, erro)
+                return _redirect_conferencia(ano, mes, retorno=retorno)
+
+            descricao = (request.POST.get('descricao') or '').strip()[:120]
+            with transaction.atomic():
+                antigas = list(
+                    TransacaoDivididaSalao.objects.filter(identificador_origem=identificador)
+                    .values_list('identificador', flat=True)
+                )
+                _limpar_vinculos_de_transacoes([identificador] + antigas)
+                TransacaoDivididaSalao.objects.filter(
+                    identificador_origem=identificador,
+                ).delete()
+                TransacaoDivididaSalao.objects.bulk_create([
+                    TransacaoDivididaSalao(
+                        identificador_origem=identificador,
+                        identificador=f'{identificador[:130]}#{indice}',
+                        valor_bruto=valor,
+                        descricao=descricao if indice == 1 else '',
+                    )
+                    for indice, valor in enumerate(valores, start=1)
+                ])
+            partes = ' + '.join(f'R$ {valor}' for valor in valores)
+            messages.success(request, f'Transação de R$ {bruto} dividida em {partes}.')
+            return _redirect_conferencia(ano, mes, retorno=retorno)
+
+        if action == 'desfazer_divisao':
+            identificador = (request.POST.get('identificador') or '').strip()
+            partes = TransacaoDivididaSalao.objects.filter(
+                identificador_origem=identificador,
+            )
+            if partes.exists():
+                with transaction.atomic():
+                    _limpar_vinculos_de_transacoes(
+                        list(partes.values_list('identificador', flat=True))
+                    )
+                    partes.delete()
+                messages.success(request, 'Divisão desfeita.')
+            return _redirect_conferencia(ano, mes, retorno=retorno)
+
         if action == 'ignorar_transacao':
             identificador = (request.POST.get('identificador') or '').strip()
             if identificador:
@@ -2710,9 +2881,9 @@ def conferencia(request):
         tolerancia = Decimal('1.00')
 
     transacoes_arquivo = request.session.get(CONFERENCIA_SESSION_KEY) or []
-    transacoes_sessao = [
+    transacoes_sessao = _expandir_divisoes([
         t for t in transacoes_arquivo if t['ano'] == ano and t['mes'] == mes
-    ]
+    ])
     identificadores_ignorados = set(
         TransacaoIgnoradaSalao.objects.values_list('identificador', flat=True)
     )
@@ -2745,13 +2916,26 @@ def conferencia(request):
     for item in itens_para_parear:
         itens_por_dia[item.data.day].append(item)
 
+    # Um vínculo entre dias aparece numa linha só, no dia da última transação.
+    # Os totais seguem a linha: contar o lançamento no dia dele e a transação no
+    # dia dela deixa os dois dias com uma diferença que só fecha no fim do mês.
+    dia_do_vinculo = {}
+    for par in pares_manuais:
+        if not par['entre_dias']:
+            continue
+        for item in par['lancamentos']:
+            dia_do_vinculo[item.chave] = par['dia_transacao']
+        for transacao in par['transacoes']:
+            dia_do_vinculo[transacao['identificador']] = par['dia_transacao']
+
     # Totais do dia usam tudo, inclusive o que já está vinculado à mão.
     todos_itens_por_dia = defaultdict(list)
     for item in itens_mes:
-        todos_itens_por_dia[item.data.day].append(item)
+        todos_itens_por_dia[dia_do_vinculo.get(item.chave, item.data.day)].append(item)
     todas_transacoes_por_dia = defaultdict(list)
     for transacao in transacoes_aprovadas:
-        todas_transacoes_por_dia[transacao['dia']].append(transacao)
+        dia = dia_do_vinculo.get(transacao['identificador'], transacao['dia'])
+        todas_transacoes_por_dia[dia].append(transacao)
 
     resultado_por_dia = {}
     pendentes_por_dia = defaultdict(list)

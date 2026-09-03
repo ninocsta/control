@@ -1,0 +1,53 @@
+<div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+    {% if transacao.dividida_de %}
+    <span class="badge text-bg-light border">parte {{ transacao.parte }}{% if transacao.descricao_parte %} · {{ transacao.descricao_parte }}{% endif %}</span>
+    {% endif %}
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="ignorar_transacao">
+        <input type="hidden" name="ano" value="{{ ano }}">
+        <input type="hidden" name="mes" value="{{ mes }}">
+        <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
+        <input type="hidden" name="identificador" value="{{ transacao.identificador }}">
+        <input type="hidden" name="referencia" value="{{ transacao.hora }} {{ transacao.meio }} R$ {{ transacao.bruto }} {{ transacao.nome }}">
+        <button class="btn btn-sm btn-outline-secondary py-0" type="submit">Não é do salão</button>
+    </form>
+    {% if transacao.dividida_de %}
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="desfazer_divisao">
+        <input type="hidden" name="ano" value="{{ ano }}">
+        <input type="hidden" name="mes" value="{{ mes }}">
+        <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
+        <input type="hidden" name="identificador" value="{{ transacao.dividida_de }}">
+        <button class="btn btn-sm btn-outline-secondary py-0" type="submit">Desfazer divisão</button>
+    </form>
+    {% endif %}
+</div>
+{% if not transacao.dividida_de %}
+<details class="mt-1">
+    <summary class="conf-sub" style="cursor:pointer">Dividir transação</summary>
+    <form method="post" class="row g-1 mt-1">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="dividir_transacao">
+        <input type="hidden" name="ano" value="{{ ano }}">
+        <input type="hidden" name="mes" value="{{ mes }}">
+        <input type="hidden" name="retorno" value="{{ request.GET.urlencode }}">
+        <input type="hidden" name="identificador" value="{{ transacao.identificador }}">
+        <div class="col-5">
+            <input type="text" class="form-control form-control-sm" name="valores"
+                   placeholder="150 ou 150; 205" aria-label="Valores das partes">
+        </div>
+        <div class="col-4">
+            <input type="text" class="form-control form-control-sm" name="descricao"
+                   placeholder="ex.: cabelo" maxlength="120" aria-label="Descrição da primeira parte">
+        </div>
+        <div class="col-3">
+            <button class="btn btn-sm btn-primary w-100 py-0" type="submit">Dividir</button>
+        </div>
+        <div class="col-12 conf-sub">
+            O que faltar para R$ {{ transacao.bruto }} vira a última parte. As partes conferem sozinhas.
+        </div>
+    </form>
+</details>
+{% endif %}

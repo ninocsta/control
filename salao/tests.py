@@ -22,6 +22,7 @@ from .models import (
     SubcategoriaDespesaSalao,
     TaxaFormaPagamentoSalao,
     ConciliacaoManualSalao,
+    TransacaoDivididaSalao,
     TransacaoIgnoradaSalao,
 )
 from .views import (
@@ -617,6 +618,159 @@ class SalaoViewsTests(TestCase):
         par = [p for d in response.context['dias'] for p in d['pares'] if p['manual']][0]
         self.assertEqual({i.id for i in par['lancamentos']}, {dia01.id, dia07.id})
         self.assertEqual(par['diferenca_valor'], Decimal('0.00'))
+
+    CSV_PIX_355 = (
+        'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+        'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+        'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+        # cabelo (150) e maquiagem (205) pagos num Pix só
+        '08/03/2026 13:40,Pix,Pix,À Vista,Conta Inteligente,\'-,TX355,Aprovada,'
+        '"355,00","355,00","0,00",0,Outro,S20,RAFAEL\n'
+    )
+
+    def _dividir(self, identificador, valores, descricao=''):
+        return self.client.post(
+            reverse('salao:conferencia'),
+            {
+                'action': 'dividir_transacao', 'ano': 2026, 'mes': 3,
+                'identificador': identificador, 'valores': valores, 'descricao': descricao,
+            },
+        )
+
+    def test_conferencia_divide_transacao_e_casa_so_a_parte_do_servico(self):
+        """Pix de 355 = cabelo 150 + maquiagem 205: a parte do cabelo fecha sozinha."""
+        self._login()
+        cabelo = self._create_lancamento(
+            data=date(2026, 3, 8), valor_bruto=Decimal('150.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_PIX_355)
+
+        self._dividir('TX355', '150', descricao='cabelo')
+        self.assertEqual(TransacaoDivididaSalao.objects.count(), 2)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = {d['dia']: d for d in response.context['dias']}[8]
+        self.assertEqual(len(dia['pares']), 1)
+        par = dia['pares'][0]
+        self.assertEqual([l.id for l in par['lancamentos']], [cabelo.id])
+        self.assertEqual([t['identificador'] for t in par['transacoes']], ['TX355#1'])
+        self.assertEqual(par['diferenca_valor'], Decimal('0.00'))
+        # o resto continua visível como recebimento sem lançamento
+        self.assertEqual(
+            [(t['identificador'], t['bruto']) for t in dia['sem_par_extrato']],
+            [('TX355#2', '205.00')],
+        )
+        # dividir não muda o total do dia
+        self.assertEqual(dia['total_extrato'], Decimal('355.00'))
+
+    def test_conferencia_divisao_recusa_partes_acima_do_valor(self):
+        self._login()
+        self._importar_extrato(self.CSV_PIX_355)
+
+        self._dividir('TX355', '200; 200')
+
+        self.assertEqual(TransacaoDivididaSalao.objects.count(), 0)
+
+    def test_conferencia_desfazer_divisao_solta_os_vinculos_das_partes(self):
+        self._login()
+        cabelo = self._create_lancamento(
+            data=date(2026, 3, 8), valor_bruto=Decimal('150.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_PIX_355)
+        self._dividir('TX355', '150')
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{cabelo.id}'], 'transacao': ['TX355#1']},
+        )
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'ignorar_transacao', 'ano': 2026, 'mes': 3,
+             'identificador': 'TX355#2'},
+        )
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'desfazer_divisao', 'ano': 2026, 'mes': 3, 'identificador': 'TX355'},
+        )
+
+        self.assertEqual(TransacaoDivididaSalao.objects.count(), 0)
+        self.assertEqual(ConciliacaoManualSalao.objects.count(), 0)
+        self.assertEqual(TransacaoIgnoradaSalao.objects.count(), 0)
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = {d['dia']: d for d in response.context['dias']}[8]
+        self.assertEqual([t['identificador'] for t in dia['sem_par_extrato']], ['TX355'])
+
+    def test_conferencia_permite_refazer_um_par_que_o_palpite_errou(self):
+        """O que já casou sozinho também pode ser selecionado e amarrado à mão."""
+        self._login()
+        self._lancamentos_do_extrato()
+        self._importar_extrato()
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        self.assertContains(response, 'data-tipo="transacao" value="TX002"')
+
+        pix = LancamentoSalao.objects.get(valor_bruto=Decimal('170.00'))
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{pix.id}'], 'transacao': ['TX003']},
+        )
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        par = [p for d in response.context['dias'] for p in d['pares'] if p['manual']][0]
+        self.assertEqual([t['identificador'] for t in par['transacoes']], ['TX003'])
+        # o Pix de 170 volta a sobrar, livre para casar com outro lançamento
+        sobras = {
+            t['identificador'] for d in response.context['dias'] for t in d['sem_par_extrato']
+        }
+        self.assertIn('TX002', sobras)
+
+    def test_conferencia_vinculo_entre_dias_zera_a_diferenca_dos_dois_dias(self):
+        """Atendimento do dia 6 pago no dia 8: a linha e os totais ficam no dia 8."""
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{penteado.id}'], 'transacao': ['TXA', 'TXB', 'TXC']},
+        )
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dias = {d['dia']: d for d in response.context['dias']}
+        # o dia 6 some: não sobrou nada nele para conferir
+        self.assertNotIn(6, dias)
+        # tudo do vínculo conta no dia em que a linha aparece
+        self.assertEqual(dias[8]['total_sistema'], Decimal('250.00'))
+        self.assertEqual(dias[8]['total_extrato'], Decimal('250.00'))
+        self.assertEqual(dias[8]['diferenca'], Decimal('0.00'))
+        self.assertEqual(dias[8]['quantidade'], 1)
+
+    def test_conferencia_conferir_dia_alcanca_lancamento_pago_em_outro_dia(self):
+        self._login()
+        penteado = self._create_lancamento(
+            data=date(2026, 3, 6), valor_bruto=Decimal('250.00'), forma_pagamento=self.forma_pix,
+        )
+        self._importar_extrato(self.CSV_NATHALIA)
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'vincular_manual', 'ano': 2026, 'mes': 3,
+             'item': [f'servico:{penteado.id}'], 'transacao': ['TXA', 'TXB', 'TXC']},
+        )
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'conferir_dia', 'ano': 2026, 'mes': 3, 'dia': 8},
+        )
+
+        penteado.refresh_from_db()
+        self.assertTrue(penteado.conferido)
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia8 = {d['dia']: d for d in response.context['dias']}[8]
+        self.assertTrue(dia8['tudo_conferido'])
 
     def test_conferencia_marca_venda_de_produto_como_conferida(self):
         self._login()
