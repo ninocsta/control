@@ -772,6 +772,52 @@ class SalaoViewsTests(TestCase):
         dia8 = {d['dia']: d for d in response.context['dias']}[8]
         self.assertTrue(dia8['tudo_conferido'])
 
+    def test_conferencia_linha_combinada_confere_os_itens_todos(self):
+        """Três itens num pagamento só conferem juntos e continuam verdes no F5."""
+        self._login()
+        csv_564 = (
+            'Data e hora,Meio - Meio,Meio - Bandeira,Meio - Parcelas,Tipo - Origem,'
+            'Tipo - Dados adicionais,Identificador,Status,Valor (R$),Líquido (R$),'
+            'Taxa Aplicada - Valor(R$),Taxa Aplicada - Aplicada(%),Plano,NSU,Origem - Nome\n'
+            '15/03/2026 17:58,Crédito,visa,3,Maquininha,\'-,TX564,Aprovada,'
+            '"564,56","524,00","\'- 40,56",7.19,1 Dia Útil,S12,GARSKE\n'
+        )
+        servico = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('383.47'),
+            forma_pagamento=self.forma_credito, taxa_percentual=Decimal('6.12'),
+        )
+        cond = self._create_venda_produto(
+            data=date(2026, 3, 15), valor_bruto=Decimal('89.00'),
+            forma_pagamento=self.forma_credito,
+        )
+        shampoo = self._create_venda_produto(
+            data=date(2026, 3, 15), valor_bruto=Decimal('92.09'),
+            forma_pagamento=self.forma_credito,
+        )
+        self._importar_extrato(csv_564)
+
+        chaves = [f'servico:{servico.id}', f'produto:{cond.id}', f'produto:{shampoo.id}']
+        response = self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
+             'item': chaves, 'conferido': 'on'},
+            headers={'x-requested-with': 'XMLHttpRequest'},
+        )
+        self.assertJSONEqual(response.content, {'ok': True, 'conferido': True})
+
+        servico.refresh_from_db()
+        cond.refresh_from_db()
+        shampoo.refresh_from_db()
+        self.assertTrue(servico.conferido)
+        self.assertTrue(cond.conferido)
+        self.assertTrue(shampoo.conferido)
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        dia = response.context['dias'][0]
+        self.assertTrue(dia['pares'][0]['todos_conferidos'])
+        self.assertEqual((dia['conferidos'], dia['quantidade']), (3, 3))
+        self.assertContains(response, 'conf-linha is-conferido')
+
     def test_conferencia_marca_venda_de_produto_como_conferida(self):
         self._login()
         venda = self._create_venda_produto(data=date(2026, 3, 15), valor_bruto=Decimal('105.00'))

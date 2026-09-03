@@ -2564,11 +2564,16 @@ def conferencia(request):
 
         if action == 'toggle_conferido':
             conferido = _parse_checkbox(request.POST.get('conferido'))
-            origem = _marcar_conferido(request.POST.get('item'), conferido)
-            if origem is None:
+            # Uma linha pode ter vários itens (três compras num pagamento só):
+            # ela confere inteira, senão o verde some no F5 com dois pendentes.
+            origens = [
+                _marcar_conferido(chave, conferido)
+                for chave in request.POST.getlist('item')
+            ]
+            if not origens or None in origens:
                 return JsonResponse({'ok': False}, status=400)
             if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return JsonResponse({'ok': True, 'conferido': origem.conferido})
+                return JsonResponse({'ok': True, 'conferido': origens[0].conferido})
             return _redirect_conferencia(ano, mes, retorno=retorno)
 
         if action == 'ajustar_lancamento':

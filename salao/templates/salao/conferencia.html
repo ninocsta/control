@@ -294,11 +294,10 @@
         {% for par in item.pares %}
         <div class="conf-linha {% if par.todos_conferidos %}is-conferido{% endif %}">
             <div class="conf-coluna">
-                {% for lancamento in par.lancamentos %}
                 <input class="form-check-input conf-check js-conferir" type="checkbox"
-                       data-item="{{ lancamento.chave }}"
-                       {% if lancamento.conferido %}checked{% endif %}>
-                {% endfor %}
+                       data-item="{% for lancamento in par.lancamentos %}{{ lancamento.chave }}{% if not forloop.last %},{% endif %}{% endfor %}"
+                       {% if par.todos_conferidos %}checked{% endif %}
+                       title="Conferir a linha inteira">
             </div>
             <div class="conf-coluna">
                 {% for lancamento in par.lancamentos %}
@@ -532,11 +531,12 @@
             const linha = check.closest('.conf-linha');
             const body = new URLSearchParams({
                 action: 'toggle_conferido',
-                item: check.dataset.item,
                 conferido: check.checked ? 'on' : '',
                 ano: '{{ ano }}',
                 mes: '{{ mes }}',
             });
+            // A linha do pagamento combinado carrega os itens todos.
+            check.dataset.item.split(',').forEach((chave) => body.append('item', chave));
             check.disabled = true;
             fetch(window.location.pathname, {
                 method: 'POST',
