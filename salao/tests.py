@@ -818,6 +818,32 @@ class SalaoViewsTests(TestCase):
         self.assertEqual((dia['conferidos'], dia['quantidade']), (3, 3))
         self.assertContains(response, 'conf-linha is-conferido')
 
+    def test_conferencia_permuta_tem_checkbox_e_fecha_o_dia(self):
+        """Permuta não passa no banco, mas confere como qualquer outra linha."""
+        self._login()
+        permuta = self._create_lancamento(
+            data=date(2026, 3, 15), valor_bruto=Decimal('300.00'), permuta=True,
+        )
+        chave = f'servico:{permuta.id}'
+
+        response = self.client.get(reverse('salao:conferencia'), {'ano': 2026, 'mes': 3})
+        self.assertContains(response, f'data-item="{chave}"')
+
+        self.client.post(
+            reverse('salao:conferencia'),
+            {'action': 'toggle_conferido', 'ano': 2026, 'mes': 3,
+             'item': [chave], 'conferido': 'on'},
+            headers={'x-requested-with': 'XMLHttpRequest'},
+        )
+
+        permuta.refresh_from_db()
+        self.assertTrue(permuta.conferido)
+        response = self.client.get(
+            reverse('salao:conferencia'), {'ano': 2026, 'mes': 3, 'dia': 15},
+        )
+        dia = response.context['dias'][0]
+        self.assertTrue(dia['tudo_conferido'])
+
     def test_conferencia_marca_venda_de_produto_como_conferida(self):
         self._login()
         venda = self._create_venda_produto(data=date(2026, 3, 15), valor_bruto=Decimal('105.00'))

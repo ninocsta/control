@@ -485,11 +485,17 @@
         {% endfor %}
 
         {% for lancamento in item.permutas %}
-        <div class="conf-linha">
-            <div class="conf-coluna"><span class="badge text-bg-warning">P</span></div>
+        <div class="conf-linha {% if lancamento.conferido %}is-conferido{% endif %}">
+            <div class="conf-coluna">
+                <input class="form-check-input conf-check js-conferir" type="checkbox"
+                       data-item="{{ lancamento.chave }}"
+                       {% if lancamento.conferido %}checked{% endif %}
+                       title="Marcar como conferido">
+            </div>
             <div class="conf-coluna"></div>
             <div class="conf-lado">
                 <span class="conf-valor js-sensitive" data-sensitive-type="money" data-sensitive-key="conf-p-{{ lancamento.chave }}">R$ {{ lancamento.valor_bruto|floatformat:2 }}</span>
+                <span class="badge text-bg-warning">PERMUTA</span>
                 <div class="conf-sub">{{ lancamento.descricao }}</div>
             </div>
             <div class="conf-lado conf-lado-extrato conf-sub">permuta — não passa pelo banco</div>
