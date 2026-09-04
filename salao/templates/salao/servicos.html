@@ -19,11 +19,7 @@
                         <input type="hidden" name="action" value="create_servico">
                     {% endif %}
 
-                    <div class="col-12 col-md-4">
-                        <label class="form-label">Código</label>
-                        <input class="form-control" name="codigo" maxlength="20" required value="{% if edit_servico %}{{ edit_servico.codigo }}{% endif %}">
-                    </div>
-                    <div class="col-12 col-md-8">
+                    <div class="col-12">
                         <label class="form-label">Nome</label>
                         <input class="form-control" name="nome" maxlength="120" required value="{% if edit_servico %}{{ edit_servico.nome }}{% endif %}">
                     </div>
@@ -60,7 +56,7 @@
                     <table class="table table-sm align-middle table-mobile">
                         <thead>
                             <tr>
-                                <th>Código</th>
+                                <th>ID</th>
                                 <th>Nome</th>
                                 <th class="text-end">Valor padrão</th>
                                 <th class="text-center">Status</th>
@@ -70,7 +66,7 @@
                         <tbody>
                             {% for servico in servicos %}
                             <tr>
-                                <td>{{ servico.codigo }}</td>
+                                <td>{{ servico.id }}</td>
                                 <td>{{ servico.nome }}</td>
                                 <td class="text-end">R$ {{ servico.valor_padrao|floatformat:2 }}</td>
                                 <td class="text-center">

@@ -5,7 +5,15 @@ from django.db import models
 
 
 class ServicoSalao(models.Model):
-    codigo = models.CharField(max_length=20, unique=True)
+    # Mantido fora da interface apenas para preservar os dados e permitir
+    # rollback seguro da migration que substituiu o código pelo ID.
+    codigo_legado = models.CharField(
+        max_length=20,
+        unique=True,
+        null=True,
+        blank=True,
+        editable=False,
+    )
     nome = models.CharField(max_length=120)
     valor_padrao = models.DecimalField(
         max_digits=10,
@@ -17,14 +25,10 @@ class ServicoSalao(models.Model):
     class Meta:
         verbose_name = 'Serviço do Salão'
         verbose_name_plural = 'Serviços do Salão'
-        ordering = ['codigo']
+        ordering = ['nome']
 
     def __str__(self):
-        return f"{self.codigo} - {self.nome}"
-
-    def save(self, *args, **kwargs):
-        self.codigo = (self.codigo or '').strip().upper()
-        super().save(*args, **kwargs)
+        return self.nome
 
 
 class FormaPagamentoSalao(models.Model):
@@ -134,7 +138,7 @@ class LancamentoSalao(models.Model):
         ordering = ['-data', '-id']
 
     def __str__(self):
-        return f"{self.data} - {self.servico.codigo} - R$ {self.valor_cobrado}"
+        return f"{self.data} - {self.servico.nome} - R$ {self.valor_cobrado}"
 
 
 class CategoriaDespesaSalao(models.Model):
@@ -177,7 +181,15 @@ class SubcategoriaDespesaSalao(models.Model):
 
 
 class ProdutoSalao(models.Model):
-    codigo = models.CharField(max_length=20, unique=True)
+    # Mantido fora da interface apenas para preservar os dados e permitir
+    # rollback seguro da migration que substituiu o código pelo ID.
+    codigo_legado = models.CharField(
+        max_length=20,
+        unique=True,
+        null=True,
+        blank=True,
+        editable=False,
+    )
     nome = models.CharField(max_length=140)
     unidade = models.CharField(max_length=20, default='UN')
     valor_venda_padrao = models.DecimalField(
@@ -211,13 +223,12 @@ class ProdutoSalao(models.Model):
     class Meta:
         verbose_name = 'Produto do Salão'
         verbose_name_plural = 'Produtos do Salão'
-        ordering = ['codigo']
+        ordering = ['nome']
 
     def __str__(self):
-        return f"{self.codigo} - {self.nome}"
+        return self.nome
 
     def save(self, *args, **kwargs):
-        self.codigo = (self.codigo or '').strip().upper()
         self.unidade = (self.unidade or '').strip().upper() or 'UN'
         super().save(*args, **kwargs)
 
@@ -295,7 +306,7 @@ class CompraEstoqueItemSalao(models.Model):
         ordering = ['compra_id', 'id']
 
     def __str__(self):
-        return f"{self.produto.codigo} - {self.quantidade} x R$ {self.custo_unitario}"
+        return f"{self.produto.nome} - {self.quantidade} x R$ {self.custo_unitario}"
 
 
 class DespesaSalao(models.Model):
@@ -460,7 +471,7 @@ class MovimentoEstoqueSalao(models.Model):
         ordering = ['-data', '-id']
 
     def __str__(self):
-        return f"{self.data} - {self.produto.codigo} - {self.tipo} - {self.quantidade}"
+        return f"{self.data} - {self.produto.nome} - {self.tipo} - {self.quantidade}"
 
 
 class ComissaoMensalSalao(models.Model):

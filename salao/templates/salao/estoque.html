@@ -49,6 +49,77 @@
 {{ produtos_catalogo|json_script:'produtos-catalogo-json' }}
 <div class="row g-3">
     <div class="col-12 col-xl-5">
+        {% if edit_movimento %}
+        <div class="card card-soft mb-3 border-primary">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Editar saída #{{ edit_movimento.id }}</h5>
+                <form method="post" class="js-saida-form row g-2 align-items-end">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_saida_estoque">
+                    <input type="hidden" name="movimento_id" value="{{ edit_movimento.id }}">
+                    <input type="hidden" name="mes" value="{{ mes }}">
+                    <input type="hidden" name="ano" value="{{ ano }}">
+
+                    <div class="col-md-6 col-lg-5">
+                        <label class="form-label">Data</label>
+                        <input class="form-control form-control-lg saida-data-input" type="date" name="data" value="{{ edit_movimento.data|date:'Y-m-d' }}" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Produto</label>
+                        <select class="form-select js-produto-saida" name="produto_id" required>
+                            {% for produto in produtos_edicao %}
+                                <option value="{{ produto.id }}" {% if produto.id == edit_movimento.produto_id %}selected{% endif %}>
+                                    {{ produto.nome }}{% if not produto.ativo %} (inativo){% endif %} (Saldo: {{ produto.saldo_atual|floatformat:3 }} {{ produto.unidade }})
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Tipo de saída</label>
+                        <select class="form-select" name="tipo_saida" required>
+                            <option value="USO_EM_CLIENTE" {% if edit_movimento.motivo != 'VENDA' %}selected{% endif %}>Uso</option>
+                            <option value="VENDA" {% if edit_movimento.motivo == 'VENDA' %}selected{% endif %}>Venda</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Quantidade</label>
+                        <input class="form-control" name="quantidade" inputmode="decimal" value="{{ edit_movimento.quantidade|floatformat:3 }}" required>
+                    </div>
+                    <div class="col-md-4 js-venda-field d-none">
+                        <label class="form-label">Venda unitária</label>
+                        <input class="form-control" name="valor_venda_unitario" inputmode="decimal" placeholder="0,00" value="{% if edit_movimento.valor_venda_unitario %}{{ edit_movimento.valor_venda_unitario|floatformat:2 }}{% endif %}">
+                    </div>
+                    <div class="col-md-6 js-venda-field d-none">
+                        <label class="form-label">Forma de pagamento</label>
+                        <select class="form-select" name="forma_pagamento_id">
+                            <option value="">Selecione</option>
+                            {% for forma in formas_pagamento_edicao %}
+                                <option value="{{ forma.id }}" {% if forma.id == edit_movimento.forma_pagamento_id %}selected{% endif %}>{{ forma.codigo }} - {{ forma.nome }}{% if not forma.ativo %} (inativa){% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3 js-venda-field d-none">
+                        <label class="form-label">Parcelas</label>
+                        <input class="form-control" name="parcelas" type="number" min="1" max="12" value="{{ edit_movimento.parcelas|default:1 }}">
+                    </div>
+                    <div class="col-12 js-venda-field d-none">
+                        <div class="small text-muted js-taxa-preview"></div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Observação</label>
+                        <input class="form-control" name="observacao" maxlength="500" placeholder="Opcional" value="{{ edit_movimento.observacao }}">
+                    </div>
+                    <div class="col-12 col-md-7 d-grid mt-2">
+                        <button class="btn btn-success" type="submit">Salvar saída</button>
+                    </div>
+                    <div class="col-12 col-md-5 d-grid mt-2">
+                        <a class="btn btn-outline-secondary" href="{% url 'salao:estoque' %}?ano={{ ano }}&mes={{ mes }}">Cancelar edição</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card card-soft mb-3">
             <div class="card-body">
                 <h5 class="card-title mb-3">Saída de Estoque</h5>
@@ -75,7 +146,7 @@
                     </div>
                 </form>
 
-                <form method="post" id="saida-estoque-form" class="row g-2 align-items-end">
+                <form method="post" id="saida-estoque-form" class="js-saida-form row g-2 align-items-end">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="create_saida_estoque">
                     <input type="hidden" name="mes" value="{{ mes }}">
@@ -87,18 +158,18 @@
                     </div>
                     <div class="col-12">
                         <label class="form-label">Produto</label>
-                        <select class="form-select" name="produto_id" id="id_produto_saida" required>
+                        <select class="form-select js-produto-saida" name="produto_id" required>
                             <option value="">Selecione</option>
                             {% for produto in produtos_ativos %}
                                 <option value="{{ produto.id }}">
-                                    {{ produto.codigo }} - {{ produto.nome }} (Saldo: {{ produto.saldo_atual|floatformat:3 }} {{ produto.unidade }})
+                                    {{ produto.nome }} (Saldo: {{ produto.saldo_atual|floatformat:3 }} {{ produto.unidade }})
                                 </option>
                             {% endfor %}
                         </select>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Tipo de saída</label>
-                        <select class="form-select" name="tipo_saida" id="id_tipo_saida" required>
+                        <select class="form-select" name="tipo_saida" required>
                             <option value="USO_EM_CLIENTE">Uso</option>
                             <option value="VENDA">Venda</option>
                         </select>
@@ -109,11 +180,11 @@
                     </div>
                     <div class="col-md-4 js-venda-field d-none">
                         <label class="form-label">Venda unitária</label>
-                        <input class="form-control" id="id_valor_venda_unitario" name="valor_venda_unitario" inputmode="decimal" placeholder="0,00">
+                        <input class="form-control" name="valor_venda_unitario" inputmode="decimal" placeholder="0,00">
                     </div>
                     <div class="col-md-6 js-venda-field d-none">
                         <label class="form-label">Forma de pagamento</label>
-                        <select class="form-select" id="id_forma_pagamento_saida" name="forma_pagamento_id">
+                        <select class="form-select" name="forma_pagamento_id">
                             <option value="">Selecione</option>
                             {% for forma in formas_pagamento_ativas %}
                                 <option value="{{ forma.id }}">{{ forma.codigo }} - {{ forma.nome }}</option>
@@ -122,10 +193,10 @@
                     </div>
                     <div class="col-md-3 js-venda-field d-none">
                         <label class="form-label">Parcelas</label>
-                        <input class="form-control" id="id_parcelas_saida" name="parcelas" type="number" min="1" max="12" value="1">
+                        <input class="form-control" name="parcelas" type="number" min="1" max="12" value="1">
                     </div>
                     <div class="col-12 js-venda-field d-none">
-                        <div class="small text-muted" id="taxa-preview"></div>
+                        <div class="small text-muted js-taxa-preview"></div>
                     </div>
                     <div class="col-12">
                         <label class="form-label">Observação</label>
@@ -164,7 +235,6 @@
                     <table class="table table-sm align-middle table-mobile">
                         <thead>
                             <tr>
-                                <th>Código</th>
                                 <th>Produto</th>
                                 <th class="text-end">Saldo</th>
                                 <th class="text-end">Mínimo</th>
@@ -173,13 +243,12 @@
                         <tbody>
                             {% for produto in produtos_alerta %}
                             <tr>
-                                <td>{{ produto.codigo }}</td>
                                 <td>{{ produto.nome }}</td>
                                 <td class="text-end text-danger fw-bold">{{ produto.saldo_atual|floatformat:3 }}</td>
                                 <td class="text-end">{{ produto.estoque_minimo|floatformat:3 }}</td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="4" class="text-center text-muted py-3">Nenhum produto em alerta.</td></tr>
+                            <tr><td colspan="3" class="text-center text-muted py-3">Nenhum produto em alerta.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -189,12 +258,11 @@
 
         <div class="card card-soft mb-3">
             <div class="card-body">
-                <h5 class="card-title">Saldos atuais</h5>
+                <h5 class="card-title mb-0">Saldos atuais</h5>
                 <div class="table-wrap mt-3">
                     <table class="table table-sm align-middle table-mobile">
                         <thead>
                             <tr>
-                                <th>Código</th>
                                 <th>Produto</th>
                                 <th class="text-center">Unidade</th>
                                 <th class="text-end">Saldo</th>
@@ -205,7 +273,6 @@
                         <tbody>
                             {% for produto in produtos_saldo %}
                             <tr>
-                                <td>{{ produto.codigo }}</td>
                                 <td>{{ produto.nome }}</td>
                                 <td class="text-center">{{ produto.unidade }}</td>
                                 <td class="text-end {% if produto.saldo_atual <= produto.estoque_minimo %}text-danger fw-bold{% endif %}">
@@ -215,7 +282,7 @@
                                 <td class="text-end">R$ {{ produto.custo_medio_atual|floatformat:2 }}</td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="6" class="text-center text-muted py-3">Sem produtos ativos.</td></tr>
+                            <tr><td colspan="5" class="text-center text-muted py-3">Sem produtos ativos.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -237,13 +304,14 @@
                                 <th class="text-end">Custo</th>
                                 <th class="text-end">Líquido venda</th>
                                 <th class="text-end">Lucro</th>
+                                <th class="text-end">Ações</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for mov in saidas_mes %}
                             <tr>
                                 <td>{{ mov.data|date:'d/m/Y' }}</td>
-                                <td>{{ mov.produto.codigo }} - {{ mov.produto.nome }}</td>
+                                <td>{{ mov.produto.nome }}</td>
                                 <td>
                                     {% if mov.motivo == 'VENDA' %}Venda{% else %}Uso em cliente{% endif %}
                                     {% if mov.forma_pagamento %}<div class="small text-muted">{{ mov.forma_pagamento.nome }} {{ mov.parcelas }}x</div>{% endif %}
@@ -252,9 +320,20 @@
                                 <td class="text-end">R$ {{ mov.valor_custo_total|floatformat:2 }}</td>
                                 <td class="text-end">R$ {{ mov.valor_liquido_venda|floatformat:2 }}</td>
                                 <td class="text-end">R$ {{ mov.lucro_produto|floatformat:2 }}</td>
+                                <td class="text-end text-nowrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'salao:estoque' %}?ano={{ ano }}&mes={{ mes }}&edit={{ mov.id }}">Editar</a>
+                                    <form method="post" class="d-inline" onsubmit="return confirm('Excluir esta saída e devolver a quantidade ao estoque?');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_saida_estoque">
+                                        <input type="hidden" name="movimento_id" value="{{ mov.id }}">
+                                        <input type="hidden" name="mes" value="{{ mes }}">
+                                        <input type="hidden" name="ano" value="{{ ano }}">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                    </form>
+                                </td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="7" class="text-center text-muted py-3">Sem saídas no período.</td></tr>
+                            <tr><td colspan="8" class="text-center text-muted py-3">Sem saídas no período.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -270,8 +349,8 @@
 <script src="{% static 'vendor/select2/js/select2.min.js' %}"></script>
 <script>
 (function () {
-    const form = document.getElementById('saida-estoque-form');
-    if (!form) return;
+    const forms = document.querySelectorAll('.js-saida-form');
+    if (!forms.length) return;
 
     const formasNode = document.getElementById('formas-catalogo-json');
     const produtosNode = document.getElementById('produtos-catalogo-json');
@@ -282,14 +361,6 @@
     formas.forEach((forma) => { byFormaId[String(forma.id)] = forma; });
     produtos.forEach((produto) => { byProdutoId[String(produto.id)] = produto; });
 
-    const tipoSaida = document.getElementById('id_tipo_saida');
-    const vendaFields = form.querySelectorAll('.js-venda-field');
-    const valorVendaInput = document.getElementById('id_valor_venda_unitario');
-    const formaPagamentoSelect = document.getElementById('id_forma_pagamento_saida');
-    const parcelasInput = document.getElementById('id_parcelas_saida');
-    const produtoSelect = document.getElementById('id_produto_saida');
-    const taxaPreview = document.getElementById('taxa-preview');
-
     const parseDecimal = (value) => {
         const parsed = Number(String(value || '').replace(',', '.'));
         return Number.isNaN(parsed) ? null : parsed;
@@ -299,84 +370,93 @@
         return Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    const getTaxa = () => {
-        const forma = byFormaId[String(formaPagamentoSelect.value || '')];
-        if (!forma) return null;
-        let parcelas = Number(parcelasInput.value || 1);
-        if (!forma.aceita_parcelamento) {
-            parcelas = 1;
-            parcelasInput.value = '1';
-            parcelasInput.setAttribute('readonly', 'readonly');
-        } else {
-            parcelasInput.removeAttribute('readonly');
-            if (parcelas < 1) parcelas = 1;
-        }
-        const taxa = forma.taxas && Object.prototype.hasOwnProperty.call(forma.taxas, String(parcelas))
-            ? parseDecimal(forma.taxas[String(parcelas)])
-            : 0;
-        return { taxa, forma, parcelas };
-    };
+    const setupForm = (form) => {
+        const tipoSaida = form.querySelector('[name="tipo_saida"]');
+        const vendaFields = form.querySelectorAll('.js-venda-field');
+        const valorVendaInput = form.querySelector('[name="valor_venda_unitario"]');
+        const formaPagamentoSelect = form.querySelector('[name="forma_pagamento_id"]');
+        const parcelasInput = form.querySelector('[name="parcelas"]');
+        const produtoSelect = form.querySelector('.js-produto-saida');
+        const taxaPreview = form.querySelector('.js-taxa-preview');
+        if (!tipoSaida) return;
 
-    const updateTaxaPreview = () => {
-        if (tipoSaida.value !== 'VENDA') {
-            taxaPreview.textContent = '';
-            return;
-        }
-        const data = getTaxa();
-        if (!data) {
-            taxaPreview.textContent = 'Selecione forma de pagamento para aplicar taxa.';
-            return;
-        }
-        if (data.taxa === 0) {
-            taxaPreview.textContent = `Taxa aplicada: 0,00% (${data.forma.nome} ${data.parcelas}x).`;
-            return;
-        }
-        taxaPreview.textContent = `Taxa aplicada: ${formatDecimal(data.taxa)}% (${data.forma.nome} ${data.parcelas}x).`;
-    };
+        const getTaxa = () => {
+            const forma = byFormaId[String(formaPagamentoSelect.value || '')];
+            if (!forma) return null;
+            let parcelas = Number(parcelasInput.value || 1);
+            if (!forma.aceita_parcelamento) {
+                parcelas = 1;
+                parcelasInput.value = '1';
+                parcelasInput.setAttribute('readonly', 'readonly');
+            } else {
+                parcelasInput.removeAttribute('readonly');
+                if (parcelas < 1) parcelas = 1;
+            }
+            const taxa = forma.taxas && Object.prototype.hasOwnProperty.call(forma.taxas, String(parcelas))
+                ? parseDecimal(forma.taxas[String(parcelas)])
+                : 0;
+            return { taxa, forma, parcelas };
+        };
 
-    const toggleVendaFields = () => {
-        const isVenda = tipoSaida.value === 'VENDA';
-        vendaFields.forEach((field) => field.classList.toggle('d-none', !isVenda));
-        valorVendaInput.required = isVenda;
-        formaPagamentoSelect.required = isVenda;
-        if (!isVenda) {
-            taxaPreview.textContent = '';
-            return;
-        }
-        updateTaxaPreview();
-    };
+        const updateTaxaPreview = () => {
+            if (tipoSaida.value !== 'VENDA') {
+                taxaPreview.textContent = '';
+                return;
+            }
+            const data = getTaxa();
+            if (!data) {
+                taxaPreview.textContent = 'Selecione forma de pagamento para aplicar taxa.';
+                return;
+            }
+            taxaPreview.textContent = `Taxa aplicada: ${formatDecimal(data.taxa)}% (${data.forma.nome} ${data.parcelas}x).`;
+        };
 
-    const prefillValorVenda = () => {
-        const produto = byProdutoId[String(produtoSelect.value || '')];
-        if (!produto || tipoSaida.value !== 'VENDA') return;
-        if (!valorVendaInput.value) {
-            valorVendaInput.value = formatDecimal(parseDecimal(produto.valor_venda_padrao || 0) || 0);
-        }
-    };
+        const toggleVendaFields = () => {
+            const isVenda = tipoSaida.value === 'VENDA';
+            vendaFields.forEach((field) => field.classList.toggle('d-none', !isVenda));
+            valorVendaInput.required = isVenda;
+            formaPagamentoSelect.required = isVenda;
+            if (!isVenda) {
+                taxaPreview.textContent = '';
+                return;
+            }
+            updateTaxaPreview();
+        };
 
-    tipoSaida.addEventListener('change', () => {
-        if (tipoSaida.value !== 'VENDA') {
-            valorVendaInput.value = '';
-            formaPagamentoSelect.value = '';
-            parcelasInput.value = '1';
-        } else {
-            prefillValorVenda();
-        }
-        toggleVendaFields();
-    });
-    formaPagamentoSelect.addEventListener('change', updateTaxaPreview);
-    parcelasInput.addEventListener('change', updateTaxaPreview);
-    produtoSelect.addEventListener('change', prefillValorVenda);
+        const prefillValorVenda = () => {
+            const produto = byProdutoId[String(produtoSelect.value || '')];
+            if (!produto || tipoSaida.value !== 'VENDA') return;
+            if (!valorVendaInput.value) {
+                valorVendaInput.value = formatDecimal(parseDecimal(produto.valor_venda_padrao || 0) || 0);
+            }
+        };
 
-    if (window.jQuery && window.jQuery.fn && window.jQuery.fn.select2) {
-        window.jQuery(produtoSelect).select2({
-            width: '100%',
-            placeholder: 'Selecione',
-            allowClear: true,
+        tipoSaida.addEventListener('change', () => {
+            if (tipoSaida.value !== 'VENDA') {
+                valorVendaInput.value = '';
+                formaPagamentoSelect.value = '';
+                parcelasInput.value = '1';
+            } else {
+                prefillValorVenda();
+            }
+            toggleVendaFields();
         });
-    }
+        formaPagamentoSelect.addEventListener('change', updateTaxaPreview);
+        parcelasInput.addEventListener('change', updateTaxaPreview);
+        produtoSelect.addEventListener('change', prefillValorVenda);
 
-    toggleVendaFields();
+        if (window.jQuery && window.jQuery.fn && window.jQuery.fn.select2) {
+            window.jQuery(produtoSelect).select2({
+                width: '100%',
+                placeholder: 'Selecione',
+                allowClear: true,
+            });
+        }
+
+        toggleVendaFields();
+    };
+
+    forms.forEach(setupForm);
 })();
 </script>
 {% endblock %}

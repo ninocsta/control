@@ -19,10 +19,10 @@ from .models import (
 
 @admin.register(ServicoSalao)
 class ServicoSalaoAdmin(admin.ModelAdmin):
-    list_display = ('codigo', 'nome', 'valor_padrao', 'ativo')
+    list_display = ('nome', 'valor_padrao', 'ativo')
     list_filter = ('ativo',)
-    search_fields = ('codigo', 'nome')
-    ordering = ('codigo',)
+    search_fields = ('nome',)
+    ordering = ('nome',)
 
 
 @admin.register(CategoriaDespesaSalao)
@@ -61,7 +61,7 @@ class TaxaFormaPagamentoSalaoAdmin(admin.ModelAdmin):
 class LancamentoSalaoAdmin(admin.ModelAdmin):
     list_display = ('data', 'servico', 'forma_pagamento', 'parcelas', 'valor_bruto', 'valor_taxa', 'valor_cobrado', 'conferido', 'criado_em')
     list_filter = ('data', 'conferido', 'servico', 'forma_pagamento', 'parcelas')
-    search_fields = ('servico__codigo', 'servico__nome', 'forma_pagamento__codigo', 'forma_pagamento__nome')
+    search_fields = ('servico__nome', 'forma_pagamento__codigo', 'forma_pagamento__nome')
     date_hierarchy = 'data'
 
 
@@ -92,7 +92,6 @@ class ComissaoMensalSalaoAdmin(admin.ModelAdmin):
 @admin.register(ProdutoSalao)
 class ProdutoSalaoAdmin(admin.ModelAdmin):
     list_display = (
-        'codigo',
         'nome',
         'unidade',
         'saldo_atual',
@@ -102,8 +101,8 @@ class ProdutoSalaoAdmin(admin.ModelAdmin):
         'ativo',
     )
     list_filter = ('ativo',)
-    search_fields = ('codigo', 'nome')
-    ordering = ('codigo',)
+    search_fields = ('nome',)
+    ordering = ('nome',)
 
 
 @admin.register(CompraEstoqueSalao)
@@ -118,7 +117,7 @@ class CompraEstoqueSalaoAdmin(admin.ModelAdmin):
 class CompraEstoqueItemSalaoAdmin(admin.ModelAdmin):
     list_display = ('compra', 'produto', 'quantidade', 'custo_unitario', 'custo_total')
     list_filter = ('produto',)
-    search_fields = ('produto__codigo', 'produto__nome', 'compra__categoria_fornecedor__nome')
+    search_fields = ('produto__nome', 'compra__categoria_fornecedor__nome')
 
 
 @admin.register(MovimentoEstoqueSalao)
@@ -135,7 +134,7 @@ class MovimentoEstoqueSalaoAdmin(admin.ModelAdmin):
         'forma_pagamento',
     )
     list_filter = ('data', 'tipo', 'motivo', 'forma_pagamento', 'produto')
-    search_fields = ('produto__codigo', 'produto__nome', 'observacao')
+    search_fields = ('produto__nome', 'observacao')
     date_hierarchy = 'data'
 
 

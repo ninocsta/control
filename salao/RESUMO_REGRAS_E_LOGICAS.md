@@ -44,7 +44,7 @@ Sem isso, redireciona para `/admin/login/`.
 ## 4) Modelos e Relacionamentos
 
 ## `ServicoSalao`
-- `codigo` (único), `nome`, `valor_padrao`, `ativo`
+- `nome`, `valor_padrao`, `ativo` (identificado pelo `id`)
 - usado em `LancamentoSalao`
 
 ## `FormaPagamentoSalao`
@@ -66,7 +66,7 @@ Sem isso, redireciona para `/admin/login/`.
 - pode ser usada como categoria geral e também como fornecedor (ex.: RIGOLIM, TOUT LISSE)
 
 ## `ProdutoSalao`
-- `codigo` (único), `nome`, `unidade`, `ativo`
+- `nome`, `unidade`, `ativo`
 - `valor_venda_padrao`
 - `estoque_minimo`
 - `saldo_atual`
@@ -109,7 +109,7 @@ Sem isso, redireciona para `/admin/login/`.
 ## 5.1 Lançamentos de Atendimento (Receita de Serviços)
 Fluxo `create_lancamento`:
 1. Valida competência (`ano/mes/dia`)
-2. Busca serviço ativo por `codigo`
+2. Busca serviço ativo por `id` (`servico_id`)
 3. Busca forma de pagamento ativa por `codigo_forma_pagamento`
 4. Determina parcelas (forma sem parcelamento força `1`)
 5. Exige taxa cadastrada para `(forma, parcelas)`
@@ -118,6 +118,7 @@ Fluxo `create_lancamento`:
 
 Regras importantes:
 - Sem taxa cadastrada em atendimento, o lançamento é bloqueado.
+- Permuta fica com `forma_pagamento = NULL` (sem contrapartida financeira), 1x e taxa zero.
 - `valor_cobrado` representa o valor líquido do atendimento.
 
 ## 5.2 Despesas e Compra com Entrada em Estoque
@@ -157,6 +158,11 @@ Fluxo `create_saida_estoque` na tela de estoque:
 Regras importantes:
 - Venda de produto **não entra na comissão de 20%** de atendimento.
 - Bloqueio de estoque negativo é obrigatório.
+- Ao editar a quantidade, somente a diferença é aplicada ao saldo atual.
+- Alterar apenas a data não muda o saldo.
+- Trocar o produto devolve a quantidade ao produto anterior e baixa do novo, na mesma transação.
+- Excluir uma saída devolve sua quantidade ao estoque automaticamente.
+- Produto ou forma de pagamento que ficaram inativos continuam disponíveis somente na edição do próprio movimento histórico.
 
 ## 5.4 Dashboard
 Para competência `ano/mes`:

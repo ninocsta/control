@@ -150,7 +150,7 @@
                                         <select class="form-select js-produto-select" name="produto_id[]">
                                             <option value="">Produto</option>
                                             {% for produto in produtos_ativos %}
-                                                <option value="{{ produto.id }}">{{ produto.codigo }} - {{ produto.nome }}</option>
+                                                <option value="{{ produto.id }}">{{ produto.nome }}</option>
                                             {% endfor %}
                                         </select>
                                     </div>
@@ -338,7 +338,7 @@
     }
     const subcategoriasNode = document.getElementById('subcategorias-despesa-json');
     const subcategorias = subcategoriasNode ? JSON.parse(subcategoriasNode.textContent) : [];
-    const produtosOptions = `{% for produto in produtos_ativos %}<option value="{{ produto.id }}">{{ produto.codigo }} - {{ produto.nome }}</option>{% endfor %}`;
+    const produtosOptions = `{% for produto in produtos_ativos %}<option value="{{ produto.id }}">{{ produto.nome }}</option>{% endfor %}`;
 
     const updateSubcategorias = (categoriaId, selectEl, selectedId) => {
         if (!selectEl) return;

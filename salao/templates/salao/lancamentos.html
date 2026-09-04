@@ -124,8 +124,8 @@
                         <input class="form-control" id="id_dia" type="number" min="1" max="31" name="dia" value="{{ dia }}" required>
                     </div>
                     <div class="col-6 col-md-3">
-                        <label class="form-label">Cód. Serviço</label>
-                        <input class="form-control" id="id_codigo" name="codigo" autocomplete="off" placeholder="Ex: C01" required>
+                        <label class="form-label">ID Serviço</label>
+                        <input class="form-control" id="id_servico" name="servico_id" inputmode="numeric" autocomplete="off" placeholder="Ex: 1" required>
                     </div>
                     <div class="col-8 col-md-3">
                         <label class="form-label">Valor bruto</label>
@@ -198,7 +198,7 @@
                         <select class="form-select" name="servico_id" required>
                             {% for servico in servicos_ativos %}
                                 <option value="{{ servico.id }}" {% if servico.id == edit_lancamento.servico_id %}selected{% endif %}>
-                                    {{ servico.codigo }} - {{ servico.nome }}
+                                    {{ servico.nome }}
                                 </option>
                             {% endfor %}
                         </select>
@@ -298,12 +298,12 @@
 
             <div class="card card-soft catalog-card mb-3">
                 <div class="card-body">
-                    <h5 class="card-title">Códigos de Serviço</h5>
+                    <h5 class="card-title">IDs de Serviço</h5>
                     <div class="table-wrap">
                         <table class="table table-sm table-mobile">
                             <thead>
                                 <tr>
-                                    <th>Código</th>
+                                    <th>ID</th>
                                     <th>Serviço</th>
                                     <th class="text-end">Valor padrão</th>
                                 </tr>
@@ -311,7 +311,7 @@
                             <tbody>
                                 {% for servico in servicos_ativos %}
                                 <tr>
-                                    <td>{{ servico.codigo }}</td>
+                                    <td>{{ servico.id }}</td>
                                     <td>{{ servico.nome }}</td>
                                     <td class="text-end">R$ {{ servico.valor_padrao|floatformat:2 }}</td>
                                 </tr>
@@ -364,9 +364,9 @@
     const catalogList = catalogNode ? JSON.parse(catalogNode.textContent) : [];
     const formasList = formasNode ? JSON.parse(formasNode.textContent) : [];
 
-    const byCode = {};
+    const byServicoId = {};
     catalogList.forEach(item => {
-        byCode[(item.codigo || '').toUpperCase()] = item;
+        byServicoId[String(item.id)] = item;
     });
 
     const byCodeForma = {};
@@ -383,7 +383,7 @@
     const lancamentosDiaTitle = document.getElementById('lancamentos-dia-title');
     const tbodyLancamentosDia = document.getElementById('lancamentos-dia-tbody');
 
-    const codigoInput = document.getElementById('id_codigo');
+    const servicoInput = document.getElementById('id_servico');
     const codigoFormaInput = document.getElementById('id_codigo_forma_pagamento');
     const parcelasInput = document.getElementById('id_parcelas');
     const valorBrutoInput = document.getElementById('id_valor_bruto');
@@ -433,8 +433,8 @@
     };
 
     const resolveServico = ({ autofill = true } = {}) => {
-        const code = (codigoInput.value || '').trim().toUpperCase();
-        const item = byCode[code];
+        const code = (servicoInput.value || '').trim();
+        const item = byServicoId[code];
 
         if (!code) {
             servicoPreview.textContent = '';
@@ -462,16 +462,17 @@
 
     const resolveForma = () => {
         if (isPermutaChecked()) {
-            const formaPermuta = byCodeForma['0'] || null;
-            codigoFormaInput.value = '0';
+            codigoFormaInput.value = '';
             parcelasInput.value = '1';
+            codigoFormaInput.required = false;
             codigoFormaInput.setAttribute('readonly', 'readonly');
             parcelasInput.setAttribute('readonly', 'readonly');
-            pagamentoPreview.textContent = 'Permuta ativa: forma 0 (Não informado), 1x, sem taxa.';
+            pagamentoPreview.textContent = 'Permuta ativa: sem forma de pagamento, 1x, sem taxa.';
             pagamentoPreview.className = 'small text-warning';
-            return formaPermuta;
+            return null;
         }
 
+        codigoFormaInput.required = true;
         codigoFormaInput.removeAttribute('readonly');
         const code = (codigoFormaInput.value || '').trim().toUpperCase();
         const forma = byCodeForma[code];
@@ -521,12 +522,12 @@
             if (valorBruto === null) {
                 liquidoPreview.textContent = 'Permuta: informe o valor bruto para prévia.';
                 liquidoPreview.className = 'small text-muted';
-                return { forma: byCodeForma['0'] || null, parcelas: 1, taxaPercentual: 0, valorBruto: null };
+                return { forma: null, parcelas: 1, taxaPercentual: 0, valorBruto: null };
             }
             liquidoPreview.textContent = `Permuta: Taxa R$ 0,00 (0,00%) | Líquido: R$ ${formatBRL(valorBruto)}`;
             liquidoPreview.className = 'small text-warning fw-semibold';
             return {
-                forma: byCodeForma['0'] || null,
+                forma: null,
                 parcelas: 1,
                 taxaPercentual: 0,
                 valorBruto,
@@ -650,15 +651,15 @@
         if (event.key === 'Enter') {
             event.preventDefault();
             scheduleRefresh();
-            codigoInput.focus();
-            codigoInput.select();
+            servicoInput.focus();
+            servicoInput.select();
         }
     });
 
     diaInput.addEventListener('change', scheduleRefresh);
     diaInput.addEventListener('blur', scheduleRefresh);
 
-    codigoInput.addEventListener('blur', () => {
+    servicoInput.addEventListener('blur', () => {
         resolveServico({ autofill: true });
         updateLiquidoPreview();
     });
@@ -693,7 +694,7 @@
         });
     }
 
-    codigoInput.addEventListener('keydown', (event) => {
+    servicoInput.addEventListener('keydown', (event) => {
         if (event.key === 'ArrowUp') {
             event.preventDefault();
             adjustDay(1);
@@ -712,8 +713,8 @@
             event.preventDefault();
             const item = resolveServico({ autofill: true });
             if (!item) {
-                codigoInput.focus();
-                codigoInput.select();
+                servicoInput.focus();
+                servicoInput.select();
                 return;
             }
             valorBrutoInput.focus();
@@ -727,8 +728,8 @@
 
         const servico = resolveServico({ autofill: false });
         if (!servico) {
-            codigoInput.focus();
-            codigoInput.select();
+            servicoInput.focus();
+            servicoInput.select();
             return;
         }
 
@@ -860,7 +861,7 @@
     }
 
     updateLiquidoPreview();
-    codigoInput.focus();
+    servicoInput.focus();
 })();
 </script>
 {% endblock %}

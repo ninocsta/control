@@ -45,7 +45,7 @@
                     <option value="">Todos</option>
                     {% for servico in servicos_ativos %}
                         <option value="{{ servico.id }}" {% if filtro_servico_id == servico.id|stringformat:'s' %}selected{% endif %}>
-                            {{ servico.codigo }} - {{ servico.nome }}
+                            {{ servico.nome }}
                         </option>
                     {% endfor %}
                 </select>
@@ -129,7 +129,7 @@
                     {% for lancamento in page_obj %}
                     <tr>
                         <td>{{ lancamento.data|date:'d/m/Y' }}</td>
-                        <td>{{ lancamento.servico.codigo }} - {{ lancamento.servico.nome }}</td>
+                        <td>{{ lancamento.servico.nome }}</td>
                         <td>
                             {% if lancamento.permuta %}
                                 <span class="badge text-bg-warning">PERMUTA</span>

@@ -44,7 +44,6 @@ from .models import (
 
 
 MONTH_OPTIONS = [(m, f"{m:02d}") for m in range(1, 13)]
-_CODIGO_NUMERIC_CHUNKS_RE = re.compile(r'(\d+)')
 
 
 def _salao_superuser_required(view_func):
@@ -56,16 +55,6 @@ def _salao_superuser_required(view_func):
 
 def _normalize_codigo(value: str) -> str:
     return (value or '').strip().upper()
-
-
-def _codigo_natural_sort_key(value: str):
-    normalized = (value or '').strip().upper()
-    parts = _CODIGO_NUMERIC_CHUNKS_RE.split(normalized)
-    return [(0, int(part)) if part.isdigit() else (1, part) for part in parts]
-
-
-def _sort_produtos_por_codigo_natural(produtos):
-    return sorted(produtos, key=lambda produto: _codigo_natural_sort_key(produto.codigo))
 
 
 def _parse_competencia(request):
@@ -275,10 +264,6 @@ def _build_formas_catalogo(formas):
     return catalogo
 
 
-def _forma_pagamento_nao_informado_ativa():
-    return FormaPagamentoSalao.objects.filter(codigo='0', ativo=True).first()
-
-
 def _calcular_liquido_com_taxa(valor_bruto, percentual):
     valor_taxa = (valor_bruto * percentual / Decimal('100.00')).quantize(
         Decimal('0.01'),
@@ -395,6 +380,110 @@ def _rebuild_produto_from_movimentos(produto_id):
     produto.saldo_atual = _quantize_quantity(saldo)
     produto.custo_medio_atual = _quantize_money(custo_medio if saldo > Decimal('0.000') else Decimal('0.00'))
     produto.save(update_fields=['saldo_atual', 'custo_medio_atual', 'atualizado_em'])
+
+
+def _parse_saida_estoque_form(request, movimento_atual=None):
+    """Lê e valida o formulário de saída de estoque. Retorna (dados, erro)."""
+    raw_data = request.POST.get('data')
+    try:
+        ano_d, mes_d, dia_d = [int(part) for part in raw_data.split('-')]
+        data_movimento = date(ano_d, mes_d, dia_d)
+    except (TypeError, ValueError, AttributeError):
+        return None, 'Data inválida para saída de estoque.'
+
+    produto = ProdutoSalao.objects.filter(id=request.POST.get('produto_id')).first()
+    produto_atual_id = movimento_atual.produto_id if movimento_atual else None
+    if not produto or (not produto.ativo and produto.id != produto_atual_id):
+        return None, 'Selecione um produto ativo válido.'
+
+    tipo_saida = (request.POST.get('tipo_saida') or '').strip().upper()
+    if tipo_saida not in ('VENDA', 'USO_EM_CLIENTE'):
+        return None, 'Selecione um tipo de saída válido.'
+
+    quantidade = _parse_decimal(request.POST.get('quantidade') or '1', quantize_pattern='0.001')
+    if quantidade is None or quantidade <= Decimal('0.000'):
+        return None, 'Informe uma quantidade válida para saída.'
+
+    forma_pagamento = None
+    parcelas = 1
+    valor_venda_unitario = None
+    if tipo_saida == 'VENDA':
+        forma_pagamento = FormaPagamentoSalao.objects.filter(
+            id=request.POST.get('forma_pagamento_id')
+        ).first()
+        forma_atual_id = movimento_atual.forma_pagamento_id if movimento_atual else None
+        if not forma_pagamento or (
+            not forma_pagamento.ativo and forma_pagamento.id != forma_atual_id
+        ):
+            return None, 'Selecione uma forma de pagamento ativa para venda.'
+
+        parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
+        if not forma_pagamento.aceita_parcelamento:
+            parcelas = 1
+
+        valor_venda_unitario = _parse_decimal(request.POST.get('valor_venda_unitario'))
+        if valor_venda_unitario is None or valor_venda_unitario < Decimal('0.00'):
+            return None, 'Informe um valor de venda unitário válido.'
+
+    return {
+        'data': data_movimento,
+        'produto': produto,
+        'tipo_saida': tipo_saida,
+        'quantidade': quantidade,
+        'forma_pagamento': forma_pagamento,
+        'parcelas': parcelas,
+        'valor_venda_unitario': valor_venda_unitario,
+        'observacao': (request.POST.get('observacao') or '').strip(),
+    }, None
+
+
+def _campos_saida_estoque(dados, custo_unitario_aplicado, taxa_percentual_preservada=None):
+    """Monta os campos do movimento de saída a partir do formulário já validado."""
+    quantidade = dados['quantidade']
+    valor_custo_total = _quantize_money(quantidade * custo_unitario_aplicado)
+    campos = {
+        'data': dados['data'],
+        'produto': dados['produto'],
+        'tipo': MovimentoEstoqueSalao.TIPO_SAIDA,
+        'motivo': MovimentoEstoqueSalao.MOTIVO_USO_EM_CLIENTE,
+        'quantidade': quantidade,
+        'custo_unitario_aplicado': custo_unitario_aplicado,
+        'valor_custo_total': valor_custo_total,
+        'valor_venda_unitario': None,
+        'valor_bruto_venda': Decimal('0.00'),
+        'taxa_percentual_aplicada': Decimal('0.00'),
+        'valor_taxa': Decimal('0.00'),
+        'valor_liquido_venda': Decimal('0.00'),
+        'lucro_produto': Decimal('0.00'),
+        'forma_pagamento': None,
+        'parcelas': 1,
+        'observacao': dados['observacao'],
+    }
+
+    if dados['tipo_saida'] == 'VENDA':
+        if taxa_percentual_preservada is None:
+            taxa = TaxaFormaPagamentoSalao.objects.filter(
+                forma_pagamento=dados['forma_pagamento'],
+                parcelas=dados['parcelas'],
+            ).first()
+            taxa_percentual = taxa.percentual if taxa else Decimal('0.00')
+        else:
+            taxa_percentual = taxa_percentual_preservada
+        valor_bruto_venda = _quantize_money(quantidade * dados['valor_venda_unitario'])
+        valor_taxa, valor_liquido_venda = _calcular_liquido_com_taxa(valor_bruto_venda, taxa_percentual)
+        campos.update(
+            motivo=MovimentoEstoqueSalao.MOTIVO_VENDA,
+            valor_venda_unitario=dados['valor_venda_unitario'],
+            valor_bruto_venda=valor_bruto_venda,
+            taxa_percentual_aplicada=taxa_percentual,
+            valor_taxa=valor_taxa,
+            valor_liquido_venda=valor_liquido_venda,
+            lucro_produto=_quantize_money(valor_liquido_venda - valor_custo_total),
+            forma_pagamento=dados['forma_pagamento'],
+            parcelas=dados['parcelas'],
+        )
+
+    return campos
 
 
 def _registrar_entrada_compra(compra, itens):
@@ -605,14 +694,14 @@ class ItemConferencia:
         )
         if tipo == self.SERVICO:
             self.valor_bruto = origem.valor_bruto
-            self.descricao = f'{origem.servico.codigo} - {origem.servico.nome}'
+            self.descricao = origem.servico.nome
             self.permuta = origem.permuta
             self.sem_comissao = origem.sem_comissao
             self.ajustavel = True
         else:
             self.valor_bruto = origem.valor_bruto_venda
             quantidade = origem.quantidade.normalize()
-            self.descricao = f'{origem.produto.codigo} - {origem.produto.nome} ({quantidade}x)'
+            self.descricao = f'{origem.produto.nome} ({quantidade}x)'
             self.permuta = False
             self.sem_comissao = False
             self.ajustavel = False
@@ -990,7 +1079,7 @@ def lancamentos(request):
         messages.error(request, 'Dia inválido para a competência selecionada.')
         dia = min(date.today().day, calendar.monthrange(ano, mes)[1])
 
-    servicos_ativos = list(ServicoSalao.objects.filter(ativo=True).order_by('codigo'))
+    servicos_ativos = list(ServicoSalao.objects.filter(ativo=True).order_by('nome'))
     formas_pagamento_ativas = list(FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'))
 
     if request.GET.get('resumo') == '1' or request.GET.get('refresh') == '1':
@@ -1031,7 +1120,7 @@ def lancamentos(request):
         action = request.POST.get('action')
 
         if action == 'create_lancamento':
-            codigo = _normalize_codigo(request.POST.get('codigo'))
+            servico_id = (request.POST.get('servico_id') or '').strip()
             codigo_forma = _normalize_codigo(request.POST.get('codigo_forma_pagamento'))
             permuta = _parse_checkbox(request.POST.get('permuta'))
             sem_comissao = not permuta and _parse_checkbox(request.POST.get('sem_comissao'))
@@ -1043,13 +1132,13 @@ def lancamentos(request):
                 messages.error(request, 'Dia inválido.')
                 return _redirect_lancamentos(ano, mes, dia)
 
-            if not codigo:
-                messages.error(request, 'Informe o código do serviço.')
+            if not servico_id:
+                messages.error(request, 'Informe o ID do serviço.')
                 return _redirect_lancamentos(ano, mes, dia_post)
 
-            servico = ServicoSalao.objects.filter(codigo=codigo, ativo=True).first()
+            servico = ServicoSalao.objects.filter(id=servico_id, ativo=True).first() if servico_id.isdigit() else None
             if not servico:
-                messages.error(request, f"Código '{codigo}' não encontrado entre os serviços ativos.")
+                messages.error(request, f"Serviço ID '{servico_id}' não encontrado entre os ativos.")
                 return _redirect_lancamentos(ano, mes, dia_post)
 
             if valor_bruto is None or valor_bruto < Decimal('0.00'):
@@ -1057,13 +1146,8 @@ def lancamentos(request):
                 return _redirect_lancamentos(ano, mes, dia_post)
 
             if permuta:
-                forma_pagamento = _forma_pagamento_nao_informado_ativa()
-                if not forma_pagamento:
-                    messages.error(
-                        request,
-                        'Forma de pagamento "0 - Não informado" não está ativa. Ajuste em Pagamentos.',
-                    )
-                    return _redirect_lancamentos(ano, mes, dia_post)
+                # Permuta não tem contrapartida financeira: fica sem forma de pagamento.
+                forma_pagamento = None
                 parcelas = 1
                 taxa_percentual = Decimal('0.00')
                 valor_taxa = Decimal('0.00')
@@ -1162,13 +1246,8 @@ def lancamentos(request):
                 return _redirect_lancamentos(origem.year, origem.month, origem.day)
 
             if permuta:
-                forma_pagamento = _forma_pagamento_nao_informado_ativa()
-                if not forma_pagamento:
-                    messages.error(
-                        request,
-                        'Forma de pagamento "0 - Não informado" não está ativa. Ajuste em Pagamentos.',
-                    )
-                    return _redirect_lancamentos(origem.year, origem.month, origem.day)
+                # Permuta não tem contrapartida financeira: fica sem forma de pagamento.
+                forma_pagamento = None
                 parcelas = 1
                 taxa_percentual = Decimal('0.00')
                 valor_taxa = Decimal('0.00')
@@ -1268,7 +1347,6 @@ def lancamentos(request):
         'servicos_catalogo': [
             {
                 'id': servico.id,
-                'codigo': servico.codigo,
                 'nome': servico.nome,
                 'valor_padrao': str(servico.valor_padrao),
             }
@@ -1290,9 +1368,7 @@ def despesas(request):
     categorias_ativas = list(
         CategoriaDespesaSalao.objects.filter(ativo=True).order_by('nome')
     )
-    produtos_ativos = _sort_produtos_por_codigo_natural(
-        list(ProdutoSalao.objects.filter(ativo=True))
-    )
+    produtos_ativos = list(ProdutoSalao.objects.filter(ativo=True).order_by('nome'))
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -1532,21 +1608,15 @@ def servicos(request):
         action = request.POST.get('action')
 
         if action == 'create_servico':
-            codigo = _normalize_codigo(request.POST.get('codigo'))
             nome = (request.POST.get('nome') or '').strip()
             valor_padrao = _parse_decimal(request.POST.get('valor_padrao'))
             ativo = _parse_checkbox(request.POST.get('ativo'))
 
-            if not codigo or not nome or valor_padrao is None:
-                messages.error(request, 'Preencha código, nome e valor padrão válidos.')
-                return _redirect_servicos()
-
-            if ServicoSalao.objects.filter(codigo=codigo).exists():
-                messages.error(request, f'Já existe serviço com código {codigo}.')
+            if not nome or valor_padrao is None:
+                messages.error(request, 'Preencha nome e valor padrão válidos.')
                 return _redirect_servicos()
 
             ServicoSalao.objects.create(
-                codigo=codigo,
                 nome=nome,
                 valor_padrao=valor_padrao,
                 ativo=ativo,
@@ -1558,20 +1628,14 @@ def servicos(request):
             servico_id = request.POST.get('servico_id')
             servico = get_object_or_404(ServicoSalao, id=servico_id)
 
-            codigo = _normalize_codigo(request.POST.get('codigo'))
             nome = (request.POST.get('nome') or '').strip()
             valor_padrao = _parse_decimal(request.POST.get('valor_padrao'))
             ativo = _parse_checkbox(request.POST.get('ativo'))
 
-            if not codigo or not nome or valor_padrao is None:
-                messages.error(request, 'Preencha código, nome e valor padrão válidos.')
+            if not nome or valor_padrao is None:
+                messages.error(request, 'Preencha nome e valor padrão válidos.')
                 return _redirect_servicos()
 
-            if ServicoSalao.objects.exclude(id=servico.id).filter(codigo=codigo).exists():
-                messages.error(request, f'Já existe outro serviço com código {codigo}.')
-                return _redirect_servicos()
-
-            servico.codigo = codigo
             servico.nome = nome
             servico.valor_padrao = valor_padrao
             servico.ativo = ativo
@@ -1592,7 +1656,7 @@ def servicos(request):
                 )
             return _redirect_servicos()
 
-    servicos_qs = ServicoSalao.objects.all().order_by('codigo')
+    servicos_qs = ServicoSalao.objects.all().order_by('nome')
     edit_id = request.GET.get('edit')
     edit_servico = ServicoSalao.objects.filter(id=edit_id).first() if edit_id else None
 
@@ -1751,15 +1815,14 @@ def produtos(request):
         action = request.POST.get('action')
 
         if action == 'create_produto':
-            codigo = _normalize_codigo(request.POST.get('codigo'))
             nome = (request.POST.get('nome') or '').strip()
             unidade = _normalize_codigo(request.POST.get('unidade') or 'UN')
             valor_venda_padrao = _parse_decimal(request.POST.get('valor_venda_padrao'))
             estoque_minimo = _parse_decimal(request.POST.get('estoque_minimo'), quantize_pattern='0.001')
             ativo = _parse_checkbox(request.POST.get('ativo'))
 
-            if not codigo or not nome:
-                messages.error(request, 'Informe código e nome do produto.')
+            if not nome:
+                messages.error(request, 'Informe o nome do produto.')
                 return _redirect_produtos()
             if valor_venda_padrao is None or valor_venda_padrao < Decimal('0.00'):
                 messages.error(request, 'Informe um valor de venda padrão válido.')
@@ -1767,12 +1830,7 @@ def produtos(request):
             if estoque_minimo is None or estoque_minimo < Decimal('0.000'):
                 messages.error(request, 'Informe um estoque mínimo válido.')
                 return _redirect_produtos()
-            if ProdutoSalao.objects.filter(codigo=codigo).exists():
-                messages.error(request, f'Já existe produto com código {codigo}.')
-                return _redirect_produtos()
-
             ProdutoSalao.objects.create(
-                codigo=codigo,
                 nome=nome,
                 unidade=unidade,
                 valor_venda_padrao=valor_venda_padrao,
@@ -1786,15 +1844,14 @@ def produtos(request):
             produto_id = request.POST.get('produto_id')
             produto = get_object_or_404(ProdutoSalao, id=produto_id)
 
-            codigo = _normalize_codigo(request.POST.get('codigo'))
             nome = (request.POST.get('nome') or '').strip()
             unidade = _normalize_codigo(request.POST.get('unidade') or 'UN')
             valor_venda_padrao = _parse_decimal(request.POST.get('valor_venda_padrao'))
             estoque_minimo = _parse_decimal(request.POST.get('estoque_minimo'), quantize_pattern='0.001')
             ativo = _parse_checkbox(request.POST.get('ativo'))
 
-            if not codigo or not nome:
-                messages.error(request, 'Informe código e nome do produto.')
+            if not nome:
+                messages.error(request, 'Informe o nome do produto.')
                 return _redirect_produtos()
             if valor_venda_padrao is None or valor_venda_padrao < Decimal('0.00'):
                 messages.error(request, 'Informe um valor de venda padrão válido.')
@@ -1802,11 +1859,6 @@ def produtos(request):
             if estoque_minimo is None or estoque_minimo < Decimal('0.000'):
                 messages.error(request, 'Informe um estoque mínimo válido.')
                 return _redirect_produtos()
-            if ProdutoSalao.objects.exclude(id=produto.id).filter(codigo=codigo).exists():
-                messages.error(request, f'Já existe outro produto com código {codigo}.')
-                return _redirect_produtos()
-
-            produto.codigo = codigo
             produto.nome = nome
             produto.unidade = unidade
             produto.valor_venda_padrao = valor_venda_padrao
@@ -1814,7 +1866,6 @@ def produtos(request):
             produto.ativo = ativo
             produto.save(
                 update_fields=[
-                    'codigo',
                     'nome',
                     'unidade',
                     'valor_venda_padrao',
@@ -1839,7 +1890,7 @@ def produtos(request):
                 )
             return _redirect_produtos()
 
-    produtos_qs = _sort_produtos_por_codigo_natural(list(ProdutoSalao.objects.all()))
+    produtos_qs = list(ProdutoSalao.objects.all().order_by('nome'))
     edit_id = request.GET.get('edit')
     edit_produto = ProdutoSalao.objects.filter(id=edit_id).first() if edit_id else None
 
@@ -1854,123 +1905,140 @@ def produtos(request):
 @_salao_superuser_required
 def estoque(request):
     ano, mes = _parse_competencia(request)
-    produtos_ativos = _sort_produtos_por_codigo_natural(
-        list(ProdutoSalao.objects.filter(ativo=True))
-    )
+    produtos_ativos = list(ProdutoSalao.objects.filter(ativo=True).order_by('nome'))
     formas_pagamento_ativas = list(FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'))
 
     if request.method == 'POST':
         action = request.POST.get('action')
 
         if action == 'create_saida_estoque':
-            raw_data = request.POST.get('data')
-            try:
-                ano_d, mes_d, dia_d = [int(part) for part in raw_data.split('-')]
-                data_movimento = date(ano_d, mes_d, dia_d)
-            except (TypeError, ValueError, AttributeError):
-                messages.error(request, 'Data inválida para saída de estoque.')
+            dados, erro = _parse_saida_estoque_form(request)
+            if erro:
+                messages.error(request, erro)
                 return _redirect_estoque(ano, mes)
-
-            produto_id = request.POST.get('produto_id')
-            produto = ProdutoSalao.objects.filter(id=produto_id, ativo=True).first()
-            if not produto:
-                messages.error(request, 'Selecione um produto ativo válido.')
-                return _redirect_estoque(ano, mes)
-
-            tipo_saida = (request.POST.get('tipo_saida') or '').strip().upper()
-            if tipo_saida not in ('VENDA', 'USO_EM_CLIENTE'):
-                messages.error(request, 'Selecione um tipo de saída válido.')
-                return _redirect_estoque(ano, mes)
-
-            quantidade = _parse_decimal(request.POST.get('quantidade') or '1', quantize_pattern='0.001')
-            if quantidade is None or quantidade <= Decimal('0.000'):
-                messages.error(request, 'Informe uma quantidade válida para saída.')
-                return _redirect_estoque(ano, mes)
-
-            observacao = (request.POST.get('observacao') or '').strip()
 
             with transaction.atomic():
-                produto_locked = ProdutoSalao.objects.select_for_update().get(id=produto.id)
-                if quantidade > produto_locked.saldo_atual:
+                produto_locked = ProdutoSalao.objects.select_for_update().get(id=dados['produto'].id)
+                if dados['quantidade'] > produto_locked.saldo_atual:
                     messages.error(
                         request,
-                        f'Estoque insuficiente para {produto_locked.codigo}. Saldo atual: {produto_locked.saldo_atual}.',
+                        f'Estoque insuficiente para {produto_locked.nome}. Saldo atual: {produto_locked.saldo_atual}.',
                     )
                     return _redirect_estoque(ano, mes)
 
-                custo_unitario_aplicado = produto_locked.custo_medio_atual
-                valor_custo_total = _quantize_money(quantidade * custo_unitario_aplicado)
-                forma_pagamento = None
-                parcelas = 1
-                taxa_percentual = Decimal('0.00')
-                valor_venda_unitario = None
-                valor_bruto_venda = Decimal('0.00')
-                valor_taxa = Decimal('0.00')
-                valor_liquido_venda = Decimal('0.00')
-                lucro_produto = Decimal('0.00')
-                motivo = MovimentoEstoqueSalao.MOTIVO_USO_EM_CLIENTE
-
-                if tipo_saida == 'VENDA':
-                    forma_pagamento_id = request.POST.get('forma_pagamento_id')
-                    forma_pagamento = FormaPagamentoSalao.objects.filter(
-                        id=forma_pagamento_id, ativo=True
-                    ).first()
-                    if not forma_pagamento:
-                        messages.error(request, 'Selecione uma forma de pagamento ativa para venda.')
-                        return _redirect_estoque(ano, mes)
-
-                    parcelas = _parse_parcelas(request.POST.get('parcelas'), default=1)
-                    if not forma_pagamento.aceita_parcelamento:
-                        parcelas = 1
-
-                    taxa = TaxaFormaPagamentoSalao.objects.filter(
-                        forma_pagamento=forma_pagamento,
-                        parcelas=parcelas,
-                    ).first()
-                    taxa_percentual = taxa.percentual if taxa else Decimal('0.00')
-
-                    valor_venda_unitario = _parse_decimal(request.POST.get('valor_venda_unitario'))
-                    if valor_venda_unitario is None or valor_venda_unitario < Decimal('0.00'):
-                        messages.error(request, 'Informe um valor de venda unitário válido.')
-                        return _redirect_estoque(ano, mes)
-
-                    valor_bruto_venda = _quantize_money(quantidade * valor_venda_unitario)
-                    valor_taxa, valor_liquido_venda = _calcular_liquido_com_taxa(
-                        valor_bruto_venda,
-                        taxa_percentual,
-                    )
-                    lucro_produto = _quantize_money(valor_liquido_venda - valor_custo_total)
-                    motivo = MovimentoEstoqueSalao.MOTIVO_VENDA
-
-                produto_locked.saldo_atual = _quantize_quantity(produto_locked.saldo_atual - quantidade)
+                campos = _campos_saida_estoque(dados, produto_locked.custo_medio_atual)
+                MovimentoEstoqueSalao.objects.create(**campos)
+                produto_locked.saldo_atual = _quantize_quantity(
+                    produto_locked.saldo_atual - dados['quantidade']
+                )
                 produto_locked.save(update_fields=['saldo_atual', 'atualizado_em'])
 
-                MovimentoEstoqueSalao.objects.create(
-                    data=data_movimento,
-                    produto=produto_locked,
-                    tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
-                    motivo=motivo,
-                    quantidade=quantidade,
-                    custo_unitario_aplicado=custo_unitario_aplicado,
-                    valor_custo_total=valor_custo_total,
-                    valor_venda_unitario=valor_venda_unitario,
-                    valor_bruto_venda=valor_bruto_venda,
-                    taxa_percentual_aplicada=taxa_percentual,
-                    valor_taxa=valor_taxa,
-                    valor_liquido_venda=valor_liquido_venda,
-                    lucro_produto=lucro_produto,
-                    forma_pagamento=forma_pagamento,
-                    parcelas=parcelas,
-                    observacao=observacao,
-                )
-
-            if tipo_saida == 'VENDA':
+            if campos['motivo'] == MovimentoEstoqueSalao.MOTIVO_VENDA:
                 messages.success(
                     request,
-                    f'Venda registrada. Líquido: R$ {valor_liquido_venda} | Lucro: R$ {lucro_produto}.',
+                    f"Venda registrada. Líquido: R$ {campos['valor_liquido_venda']} | Lucro: R$ {campos['lucro_produto']}.",
                 )
             else:
                 messages.success(request, 'Saída de uso em cliente registrada com sucesso.')
+            return _redirect_estoque(ano, mes)
+
+        if action == 'update_saida_estoque':
+            movimento_atual = get_object_or_404(
+                MovimentoEstoqueSalao,
+                id=request.POST.get('movimento_id'),
+                tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+            )
+            dados, erro = _parse_saida_estoque_form(request, movimento_atual=movimento_atual)
+            if erro:
+                messages.error(request, erro)
+                return _redirect_estoque(ano, mes)
+
+            with transaction.atomic():
+                movimento = MovimentoEstoqueSalao.objects.select_for_update().get(
+                    id=movimento_atual.id,
+                    tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+                )
+                produto_anterior_id = movimento.produto_id
+                produto_novo_id = dados['produto'].id
+                produtos_locked = {
+                    produto.id: produto
+                    for produto in ProdutoSalao.objects.select_for_update()
+                    .filter(id__in=sorted({produto_anterior_id, produto_novo_id}))
+                    .order_by('id')
+                }
+                produto_anterior = produtos_locked[produto_anterior_id]
+                produto_novo = produtos_locked[produto_novo_id]
+                mesmo_produto = produto_anterior_id == produto_novo_id
+                quantidade_anterior = movimento.quantidade
+
+                quantidade_extra = (
+                    max(dados['quantidade'] - quantidade_anterior, Decimal('0.000'))
+                    if mesmo_produto
+                    else dados['quantidade']
+                )
+                if quantidade_extra > produto_novo.saldo_atual:
+                    messages.error(
+                        request,
+                        f'Estoque insuficiente para {produto_novo.nome}. '
+                        f'Saldo atual: {produto_novo.saldo_atual}.',
+                    )
+                    return _redirect_estoque(ano, mes)
+
+                custo_unitario = (
+                    movimento.custo_unitario_aplicado
+                    if mesmo_produto
+                    else produto_novo.custo_medio_atual
+                )
+                mesma_condicao_pagamento = (
+                    movimento.motivo == MovimentoEstoqueSalao.MOTIVO_VENDA
+                    and dados['tipo_saida'] == 'VENDA'
+                    and movimento.forma_pagamento_id == dados['forma_pagamento'].id
+                    and movimento.parcelas == dados['parcelas']
+                )
+                taxa_preservada = (
+                    movimento.taxa_percentual_aplicada
+                    if mesma_condicao_pagamento
+                    else None
+                )
+                for campo, valor in _campos_saida_estoque(
+                    dados,
+                    custo_unitario,
+                    taxa_percentual_preservada=taxa_preservada,
+                ).items():
+                    setattr(movimento, campo, valor)
+                movimento.save()
+
+                if mesmo_produto:
+                    produto_novo.saldo_atual = _quantize_quantity(
+                        produto_novo.saldo_atual + quantidade_anterior - dados['quantidade']
+                    )
+                    produto_novo.save(update_fields=['saldo_atual', 'atualizado_em'])
+                else:
+                    produto_anterior.saldo_atual = _quantize_quantity(
+                        produto_anterior.saldo_atual + quantidade_anterior
+                    )
+                    produto_novo.saldo_atual = _quantize_quantity(
+                        produto_novo.saldo_atual - dados['quantidade']
+                    )
+                    produto_anterior.save(update_fields=['saldo_atual', 'atualizado_em'])
+                    produto_novo.save(update_fields=['saldo_atual', 'atualizado_em'])
+
+            messages.success(request, 'Saída atualizada e saldo do estoque ajustado automaticamente.')
+            return _redirect_estoque(dados['data'].year, dados['data'].month)
+
+        if action == 'delete_saida_estoque':
+            with transaction.atomic():
+                movimento = get_object_or_404(
+                    MovimentoEstoqueSalao.objects.select_for_update(),
+                    id=request.POST.get('movimento_id'),
+                    tipo=MovimentoEstoqueSalao.TIPO_SAIDA,
+                )
+                produto = ProdutoSalao.objects.select_for_update().get(id=movimento.produto_id)
+                quantidade = movimento.quantidade
+                movimento.delete()
+                produto.saldo_atual = _quantize_quantity(produto.saldo_atual + quantidade)
+                produto.save(update_fields=['saldo_atual', 'atualizado_em'])
+            messages.success(request, 'Saída removida e quantidade devolvida ao estoque.')
             return _redirect_estoque(ano, mes)
 
     inicio_mes, fim_mes = _date_range_for_month(ano, mes)
@@ -1983,9 +2051,7 @@ def estoque(request):
         .order_by('-data', '-id')
     )
     saidas_mes = saidas_qs[:300]
-    produtos_saldo = _sort_produtos_por_codigo_natural(
-        list(ProdutoSalao.objects.filter(ativo=True))
-    )
+    produtos_saldo = list(ProdutoSalao.objects.filter(ativo=True).order_by('nome'))
     produtos_alerta = [produto for produto in produtos_saldo if produto.saldo_atual <= produto.estoque_minimo]
     vendas_mes = saidas_qs.filter(motivo=MovimentoEstoqueSalao.MOTIVO_VENDA)
     resumo_vendas_mes = vendas_mes.aggregate(
@@ -1996,10 +2062,36 @@ def estoque(request):
         lucro=Sum('lucro_produto'),
     )
 
+    edit_movimento_id = request.GET.get('edit')
+    edit_movimento = (
+        MovimentoEstoqueSalao.objects.filter(
+            id=edit_movimento_id, tipo=MovimentoEstoqueSalao.TIPO_SAIDA
+        )
+        .select_related('produto', 'forma_pagamento')
+        .first()
+        if edit_movimento_id
+        else None
+    )
+    produtos_edicao = list(produtos_ativos)
+    formas_pagamento_edicao = list(formas_pagamento_ativas)
+    if edit_movimento:
+        if not edit_movimento.produto.ativo:
+            produtos_edicao.append(edit_movimento.produto)
+            produtos_edicao.sort(key=lambda produto: produto.nome.casefold())
+        if (
+            edit_movimento.forma_pagamento
+            and not edit_movimento.forma_pagamento.ativo
+        ):
+            formas_pagamento_edicao.append(edit_movimento.forma_pagamento)
+            formas_pagamento_edicao.sort(key=lambda forma: forma.codigo.casefold())
+
     context = {
         'active_tab': 'estoque',
         'ano': ano,
         'mes': mes,
+        'edit_movimento': edit_movimento,
+        'produtos_edicao': produtos_edicao,
+        'formas_pagamento_edicao': formas_pagamento_edicao,
         'month_options': MONTH_OPTIONS,
         'year_options': _build_year_options(),
         'data_padrao': date(ano, mes, min(date.today().day, calendar.monthrange(ano, mes)[1])),
@@ -2007,14 +2099,13 @@ def estoque(request):
         'produtos_catalogo': [
             {
                 'id': produto.id,
-                'codigo': produto.codigo,
                 'nome': produto.nome,
                 'valor_venda_padrao': str(produto.valor_venda_padrao),
             }
-            for produto in produtos_ativos
+            for produto in produtos_edicao
         ],
         'formas_pagamento_ativas': formas_pagamento_ativas,
-        'formas_catalogo': _build_formas_catalogo(formas_pagamento_ativas),
+        'formas_catalogo': _build_formas_catalogo(formas_pagamento_edicao),
         'saidas_mes': saidas_mes,
         'produtos_saldo': produtos_saldo,
         'produtos_alerta': produtos_alerta,
@@ -2285,9 +2376,9 @@ def dashboard(request):
         )
 
     ranking_servicos = (
-        lancamentos_normais_mes.values('servico__codigo', 'servico__nome')
+        lancamentos_normais_mes.values('servico__nome')
         .annotate(quantidade=Count('id'), total=Sum('valor_cobrado'))
-        .order_by('-quantidade', '-total', 'servico__codigo')
+        .order_by('-quantidade', '-total', 'servico__nome')
     )
 
     despesas_por_categoria = (
@@ -2308,7 +2399,7 @@ def dashboard(request):
     )
     produtos_alerta = (
         ProdutoSalao.objects.filter(ativo=True, saldo_atual__lte=F('estoque_minimo'))
-        .order_by('saldo_atual', 'codigo')[:15]
+        .order_by('saldo_atual', 'nome')[:15]
     )
 
     serie_meses = _iter_months_backwards(ano, mes, quantidade=6)
@@ -3116,7 +3207,7 @@ def grid_lancamentos(request):
         'mes': mes,
         'month_options': MONTH_OPTIONS,
         'year_options': _build_year_options(),
-        'servicos_ativos': ServicoSalao.objects.filter(ativo=True).order_by('codigo'),
+        'servicos_ativos': ServicoSalao.objects.filter(ativo=True).order_by('nome'),
         'formas_pagamento_ativas': FormaPagamentoSalao.objects.filter(ativo=True).order_by('codigo'),
         'filtro_servico_id': servico_id,
         'filtro_forma_pagamento_id': forma_pagamento_id,

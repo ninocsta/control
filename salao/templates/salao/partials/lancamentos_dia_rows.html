@@ -1,7 +1,7 @@
 {% for item in lancamentos_dia %}
 <tr>
     <td class="d-none d-md-table-cell">{{ item.id }}</td>
-    <td>{{ item.servico.codigo }} - {{ item.servico.nome }}</td>
+    <td>{{ item.servico.nome }}</td>
     <td>
         {% if item.permuta %}
             <span class="badge text-bg-warning">PERMUTA</span>

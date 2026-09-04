@@ -19,11 +19,7 @@
                         <input type="hidden" name="action" value="create_produto">
                     {% endif %}
 
-                    <div class="col-12 col-md-4">
-                        <label class="form-label">Código</label>
-                        <input class="form-control" name="codigo" maxlength="20" required value="{% if edit_produto %}{{ edit_produto.codigo }}{% endif %}">
-                    </div>
-                    <div class="col-12 col-md-8">
+                    <div class="col-12">
                         <label class="form-label">Nome</label>
                         <input class="form-control" name="nome" maxlength="140" required value="{% if edit_produto %}{{ edit_produto.nome }}{% endif %}">
                     </div>
@@ -68,7 +64,6 @@
                     <table class="table table-sm align-middle table-mobile">
                         <thead>
                             <tr>
-                                <th>Código</th>
                                 <th>Produto</th>
                                 <th class="text-center">Unid.</th>
                                 <th class="text-end">Saldo</th>
@@ -82,7 +77,6 @@
                         <tbody>
                             {% for produto in produtos %}
                             <tr>
-                                <td>{{ produto.codigo }}</td>
                                 <td>{{ produto.nome }}</td>
                                 <td class="text-center">{{ produto.unidade }}</td>
                                 <td class="text-end">{{ produto.saldo_atual|floatformat:3 }}</td>
@@ -101,7 +95,7 @@
                                 </td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="9" class="text-center text-muted py-4">Nenhum produto cadastrado.</td></tr>
+                            <tr><td colspan="8" class="text-center text-muted py-4">Nenhum produto cadastrado.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>

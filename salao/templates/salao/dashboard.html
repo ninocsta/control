@@ -386,7 +386,6 @@
                     <table class="table table-sm table-mobile">
                         <thead>
                             <tr>
-                                <th>Código</th>
                                 <th>Serviço</th>
                                 <th class="text-end">Qtd</th>
                                 <th class="text-end">Total</th>
@@ -395,13 +394,12 @@
                         <tbody>
                             {% for item in ranking_servicos %}
                             <tr>
-                                <td>{{ item.servico__codigo }}</td>
                                 <td>{{ item.servico__nome }}</td>
                                 <td class="text-end"><span class="js-sensitive" data-sensitive-type="count" data-sensitive-key="ranking-qtd">{{ item.quantidade }}</span></td>
                                 <td class="text-end"><span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="ranking-total">R$ {{ item.total|floatformat:2 }}</span></td>
                             </tr>
                             {% empty %}
-                            <tr><td colspan="4" class="text-center text-muted py-4">Sem lançamentos no mês.</td></tr>
+                            <tr><td colspan="3" class="text-center text-muted py-4">Sem lançamentos no mês.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -476,7 +474,6 @@
             <table class="table table-sm table-mobile">
                 <thead>
                     <tr>
-                        <th>Código</th>
                         <th>Produto</th>
                         <th class="text-end">Saldo</th>
                         <th class="text-end">Mínimo</th>
@@ -486,14 +483,13 @@
                 <tbody>
                     {% for produto in produtos_alerta %}
                     <tr>
-                        <td>{{ produto.codigo }}</td>
                         <td>{{ produto.nome }}</td>
                         <td class="text-end text-danger fw-bold"><span class="js-sensitive" data-sensitive-type="quantity3" data-sensitive-key="alerta-saldo">{{ produto.saldo_atual|floatformat:3 }}</span></td>
                         <td class="text-end"><span class="js-sensitive" data-sensitive-type="quantity3" data-sensitive-key="alerta-minimo">{{ produto.estoque_minimo|floatformat:3 }}</span></td>
                         <td class="text-end"><span class="js-sensitive" data-sensitive-type="money" data-sensitive-key="alerta-custo">R$ {{ produto.custo_medio_atual|floatformat:2 }}</span></td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="5" class="text-center text-muted py-4">Nenhum produto em alerta.</td></tr>
+                    <tr><td colspan="4" class="text-center text-muted py-4">Nenhum produto em alerta.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

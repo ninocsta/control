@@ -42,7 +42,6 @@ class SalaoViewsTests(TestCase):
         )
 
         self.servico = ServicoSalao.objects.create(
-            codigo='C01',
             nome='Corte Feminino',
             valor_padrao=Decimal('80.00'),
             ativo=True,
@@ -57,7 +56,6 @@ class SalaoViewsTests(TestCase):
             ativo=True,
         )
         self.produto = ProdutoSalao.objects.create(
-            codigo='P01',
             nome='Máscara Capilar',
             unidade='UN',
             valor_venda_padrao=Decimal('35.00'),
@@ -1670,7 +1668,7 @@ class SalaoViewsTests(TestCase):
             {
                 'action': 'create_lancamento',
                 'ano': 2026, 'mes': 3, 'dia': 10,
-                'codigo': self.servico.codigo,
+                'servico_id': self.servico.id,
                 'codigo_forma_pagamento': self.forma_credito.codigo,
                 'parcelas': 1,
                 'valor_bruto': '100,00',
@@ -1697,7 +1695,7 @@ class SalaoViewsTests(TestCase):
             {
                 'action': 'create_lancamento',
                 'ano': 2026, 'mes': 3, 'dia': 10,
-                'codigo': self.servico.codigo,
+                'servico_id': self.servico.id,
                 'codigo_forma_pagamento': self.forma_credito.codigo,
                 'parcelas': 1,
                 'valor_bruto': '100,00',
@@ -1717,7 +1715,7 @@ class SalaoViewsTests(TestCase):
             {
                 'action': 'create_lancamento',
                 'ano': 2026, 'mes': 3, 'dia': 10,
-                'codigo': self.servico.codigo,
+                'servico_id': self.servico.id,
                 'parcelas': 1,
                 'valor_bruto': '100,00',
                 'permuta': 'on',
@@ -1847,7 +1845,7 @@ class SalaoViewsTests(TestCase):
                 'ano': 2026,
                 'mes': 3,
                 'dia': 10,
-                'codigo': 'X99',
+                'servico_id': 999999,
                 'codigo_forma_pagamento': '3',
                 'parcelas': 1,
                 'valor_bruto': '70,00',
@@ -1867,7 +1865,7 @@ class SalaoViewsTests(TestCase):
                 'ano': 2026,
                 'mes': 3,
                 'dia': 10,
-                'codigo': 'C01',
+                'servico_id': self.servico.id,
                 'codigo_forma_pagamento': '999',
                 'parcelas': 1,
                 'valor_bruto': '70,00',
@@ -1887,7 +1885,7 @@ class SalaoViewsTests(TestCase):
                 'ano': 2026,
                 'mes': 3,
                 'dia': 10,
-                'codigo': 'C01',
+                'servico_id': self.servico.id,
                 'codigo_forma_pagamento': '2',
                 'parcelas': 12,
                 'valor_bruto': '100,00',
@@ -1907,7 +1905,7 @@ class SalaoViewsTests(TestCase):
                 'ano': 2026,
                 'mes': 3,
                 'dia': 10,
-                'codigo': 'c01',
+                'servico_id': self.servico.id,
                 'codigo_forma_pagamento': '4',
                 'parcelas': 1,
                 'valor_bruto': '100,00',
@@ -1921,7 +1919,7 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(lanc.valor_cobrado, Decimal('97.00'))
         self.assertFalse(lanc.permuta)
 
-    def test_lancamento_permuta_forca_nao_informado_sem_taxa(self):
+    def test_lancamento_permuta_fica_sem_forma_de_pagamento(self):
         self._login()
 
         response = self.client.post(
@@ -1931,7 +1929,7 @@ class SalaoViewsTests(TestCase):
                 'ano': 2026,
                 'mes': 3,
                 'dia': 10,
-                'codigo': 'c01',
+                'servico_id': self.servico.id,
                 'codigo_forma_pagamento': '4',
                 'parcelas': 12,
                 'permuta': 'on',
@@ -1942,7 +1940,7 @@ class SalaoViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         lanc = LancamentoSalao.objects.get()
         self.assertTrue(lanc.permuta)
-        self.assertEqual(lanc.forma_pagamento_id, self.forma_nao_informado.id)
+        self.assertIsNone(lanc.forma_pagamento_id)
         self.assertEqual(lanc.parcelas, 1)
         self.assertEqual(lanc.taxa_percentual_aplicada, Decimal('0.00'))
         self.assertEqual(lanc.valor_taxa, Decimal('0.00'))
@@ -2048,7 +2046,7 @@ class SalaoViewsTests(TestCase):
 
         lancamento.refresh_from_db()
         self.assertTrue(lancamento.permuta)
-        self.assertEqual(lancamento.forma_pagamento_id, self.forma_nao_informado.id)
+        self.assertIsNone(lancamento.forma_pagamento_id)
         self.assertEqual(lancamento.parcelas, 1)
         self.assertEqual(lancamento.valor_taxa, Decimal('0.00'))
         self.assertEqual(lancamento.valor_cobrado, Decimal('200.00'))
@@ -2196,14 +2194,13 @@ class SalaoViewsTests(TestCase):
             reverse('salao:servicos'),
             {
                 'action': 'create_servico',
-                'codigo': 'P10',
                 'nome': 'Progressiva',
                 'valor_padrao': '250,00',
                 'ativo': 'on',
             },
         )
         self.assertEqual(create_response.status_code, 302)
-        created = ServicoSalao.objects.get(codigo='P10')
+        created = ServicoSalao.objects.get(nome='Progressiva')
         self.assertEqual(created.valor_padrao, Decimal('250.00'))
 
         update_response = self.client.post(
@@ -2211,7 +2208,6 @@ class SalaoViewsTests(TestCase):
             {
                 'action': 'update_servico',
                 'servico_id': created.id,
-                'codigo': 'P10',
                 'nome': 'Progressiva Premium',
                 'valor_padrao': '300,00',
             },
@@ -2509,6 +2505,295 @@ class SalaoViewsTests(TestCase):
         self.produto.refresh_from_db()
         self.assertEqual(self.produto.saldo_atual, Decimal('2.500'))
 
+    def _saida_com_entrada(self, quantidade='2'):
+        """Cria uma entrada de 10 un. a R$ 10,00 e uma saída, devolvendo o movimento de saída."""
+        MovimentoEstoqueSalao.objects.create(
+            data=date(2026, 3, 1),
+            produto=self.produto,
+            tipo=MovimentoEstoqueSalao.TIPO_ENTRADA,
+            motivo=MovimentoEstoqueSalao.MOTIVO_COMPRA,
+            quantidade=Decimal('10.000'),
+            custo_unitario_aplicado=Decimal('10.00'),
+            valor_custo_total=Decimal('100.00'),
+        )
+        self.produto.saldo_atual = Decimal('10.000')
+        self.produto.custo_medio_atual = Decimal('10.00')
+        self.produto.save(update_fields=['saldo_atual', 'custo_medio_atual', 'atualizado_em'])
+
+        self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'create_saida_estoque',
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-12',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'USO_EM_CLIENTE',
+                'quantidade': quantidade,
+            },
+        )
+        return MovimentoEstoqueSalao.objects.get(tipo=MovimentoEstoqueSalao.TIPO_SAIDA)
+
+    def test_update_saida_aumenta_quantidade_e_ajusta_saldo_pela_diferenca(self):
+        self._login()
+        mov = self._saida_com_entrada(quantidade='2')
+
+        response = self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'update_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-20',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'USO_EM_CLIENTE',
+                'quantidade': '5',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mov.refresh_from_db()
+        self.assertEqual(mov.data, date(2026, 3, 20))
+        self.assertEqual(mov.quantidade, Decimal('5.000'))
+        self.assertEqual(mov.valor_custo_total, Decimal('50.00'))
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('5.000'))
+
+    def test_update_saida_bloqueia_quantidade_maior_que_disponivel(self):
+        self._login()
+        mov = self._saida_com_entrada(quantidade='2')
+
+        self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'update_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-12',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'USO_EM_CLIENTE',
+                'quantidade': '11',
+            },
+        )
+
+        mov.refresh_from_db()
+        self.assertEqual(mov.quantidade, Decimal('2.000'))
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('8.000'))
+
+    def test_delete_saida_devolve_saldo(self):
+        self._login()
+        mov = self._saida_com_entrada(quantidade='2')
+
+        response = self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'delete_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.assertFalse(MovimentoEstoqueSalao.objects.filter(id=mov.id).exists())
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('10.000'))
+
+    def test_update_saida_reduz_quantidade_e_devolve_apenas_a_diferenca(self):
+        self._login()
+        mov = self._saida_com_entrada(quantidade='3')
+
+        response = self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'update_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-12',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'USO_EM_CLIENTE',
+                'quantidade': '2',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mov.refresh_from_db()
+        self.assertEqual(mov.quantidade, Decimal('2.000'))
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('8.000'))
+
+    def test_update_saida_troca_data_sem_alterar_saldo(self):
+        self._login()
+        mov = self._saida_com_entrada(quantidade='2')
+
+        response = self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'update_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-09-03',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'USO_EM_CLIENTE',
+                'quantidade': '2',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('ano=2026', response['Location'])
+        self.assertIn('mes=9', response['Location'])
+        mov.refresh_from_db()
+        self.assertEqual(mov.data, date(2026, 9, 3))
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('8.000'))
+
+    def test_update_saida_preserva_taxa_historica_quando_pagamento_nao_muda(self):
+        self._login()
+        self.produto.saldo_atual = Decimal('5.000')
+        self.produto.custo_medio_atual = Decimal('10.00')
+        self.produto.save(update_fields=['saldo_atual', 'custo_medio_atual', 'atualizado_em'])
+        self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'create_saida_estoque',
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-12',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'VENDA',
+                'quantidade': '2',
+                'valor_venda_unitario': '30,00',
+                'forma_pagamento_id': self.forma_debito.id,
+                'parcelas': 1,
+            },
+        )
+        mov = MovimentoEstoqueSalao.objects.get(tipo=MovimentoEstoqueSalao.TIPO_SAIDA)
+        TaxaFormaPagamentoSalao.objects.filter(
+            forma_pagamento=self.forma_debito,
+            parcelas=1,
+        ).update(percentual=Decimal('9.00'))
+
+        response = self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'update_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-09-03',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'VENDA',
+                'quantidade': '2',
+                'valor_venda_unitario': '30,00',
+                'forma_pagamento_id': self.forma_debito.id,
+                'parcelas': 1,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mov.refresh_from_db()
+        self.assertEqual(mov.taxa_percentual_aplicada, Decimal('3.00'))
+        self.assertEqual(mov.valor_taxa, Decimal('1.80'))
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('3.000'))
+
+    def test_update_saida_troca_produto_e_ajusta_os_dois_saldos(self):
+        self._login()
+        mov = self._saida_com_entrada(quantidade='2')
+        outro_produto = ProdutoSalao.objects.create(
+            nome='Shampoo',
+            unidade='UN',
+            saldo_atual=Decimal('4.000'),
+            custo_medio_atual=Decimal('7.00'),
+            ativo=True,
+        )
+
+        response = self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'update_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-12',
+                'produto_id': outro_produto.id,
+                'tipo_saida': 'USO_EM_CLIENTE',
+                'quantidade': '3',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mov.refresh_from_db()
+        self.assertEqual(mov.produto_id, outro_produto.id)
+        self.assertEqual(mov.quantidade, Decimal('3.000'))
+        self.assertEqual(mov.custo_unitario_aplicado, Decimal('7.00'))
+        self.produto.refresh_from_db()
+        outro_produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('10.000'))
+        self.assertEqual(outro_produto.saldo_atual, Decimal('1.000'))
+
+    def test_update_saida_preserva_produto_e_pagamento_inativos(self):
+        self._login()
+        self.produto.saldo_atual = Decimal('5.000')
+        self.produto.custo_medio_atual = Decimal('10.00')
+        self.produto.save(update_fields=['saldo_atual', 'custo_medio_atual', 'atualizado_em'])
+        self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'create_saida_estoque',
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-12',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'VENDA',
+                'quantidade': '2',
+                'valor_venda_unitario': '30,00',
+                'forma_pagamento_id': self.forma_debito.id,
+                'parcelas': 1,
+            },
+        )
+        mov = MovimentoEstoqueSalao.objects.get(tipo=MovimentoEstoqueSalao.TIPO_SAIDA)
+        self.produto.ativo = False
+        self.produto.save(update_fields=['ativo', 'atualizado_em'])
+        self.forma_debito.ativo = False
+        self.forma_debito.save(update_fields=['ativo'])
+
+        edit_response = self.client.get(
+            reverse('salao:estoque'),
+            {'ano': 2026, 'mes': 3, 'edit': mov.id},
+        )
+        self.assertContains(edit_response, 'Máscara Capilar (inativo)')
+        self.assertContains(edit_response, f'{self.forma_debito.nome} (inativa)')
+
+        response = self.client.post(
+            reverse('salao:estoque'),
+            {
+                'action': 'update_saida_estoque',
+                'movimento_id': mov.id,
+                'ano': 2026,
+                'mes': 3,
+                'data': '2026-03-12',
+                'produto_id': self.produto.id,
+                'tipo_saida': 'VENDA',
+                'quantidade': '1',
+                'valor_venda_unitario': '30,00',
+                'forma_pagamento_id': self.forma_debito.id,
+                'parcelas': 1,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mov.refresh_from_db()
+        self.assertEqual(mov.produto_id, self.produto.id)
+        self.assertEqual(mov.forma_pagamento_id, self.forma_debito.id)
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.saldo_atual, Decimal('4.000'))
+
     def test_saida_bloqueia_estoque_insuficiente(self):
         self._login()
         self.produto.saldo_atual = Decimal('1.000')
@@ -2636,7 +2921,6 @@ class SalaoViewsTests(TestCase):
     def test_grid_lancamentos_filtra_por_servico_e_pagamento(self):
         self._login()
         outro_servico = ServicoSalao.objects.create(
-            codigo='C99',
             nome='Outro Serviço',
             valor_padrao=Decimal('40.00'),
             ativo=True,
