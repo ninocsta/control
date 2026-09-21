@@ -1,11 +1,12 @@
 from io import BytesIO
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from openpyxl import load_workbook
 
 from .models import (
@@ -1768,7 +1769,45 @@ class SalaoViewsTests(TestCase):
         lancamento.refresh_from_db()
         self.assertEqual(lancamento.valor_bruto, Decimal('120.00'))
 
-    def test_editar_lancamento_mudando_a_data_segue_o_lancamento(self):
+    def test_nao_lanca_nem_edita_para_data_futura(self):
+        self._login()
+        amanha = timezone.localdate() + timedelta(days=1)
+        self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'create_lancamento',
+                'ano': amanha.year, 'mes': amanha.month, 'dia': amanha.day,
+                'servico_id': self.servico.id,
+                'codigo_forma_pagamento': self.forma_dinheiro.codigo,
+                'parcelas': 1,
+                'valor_bruto': '100,00',
+            },
+        )
+        self.assertFalse(LancamentoSalao.objects.exists())
+
+        lancamento = self._create_lancamento(
+            data=date(2026, 3, 15),
+            valor_bruto=Decimal('100.00'),
+            forma_pagamento=self.forma_dinheiro,
+        )
+        self.client.post(
+            reverse('salao:lancamentos'),
+            {
+                'action': 'update_lancamento',
+                'ano': 2026, 'mes': 3, 'dia': 15,
+                'lancamento_id': lancamento.id,
+                'data': amanha.isoformat(),
+                'servico_id': self.servico.id,
+                'valor_bruto': '100,00',
+                'forma_pagamento_id': self.forma_dinheiro.id,
+                'parcelas': 1,
+            },
+        )
+        lancamento.refresh_from_db()
+        self.assertEqual(lancamento.data, date(2026, 3, 15))
+
+    def test_editar_lancamento_mudando_a_data_volta_para_o_dia_de_origem(self):
+        """Seguir a data nova prendia o campo Dia nela e os lançamentos rápidos iam junto."""
         self._login()
         lancamento = self._create_lancamento(
             data=date(2026, 3, 15),
@@ -1791,8 +1830,10 @@ class SalaoViewsTests(TestCase):
             },
         )
         self.assertIn('ano=2026', response['Location'])
-        self.assertIn('mes=4', response['Location'])
-        self.assertIn('dia=20', response['Location'])
+        self.assertIn('mes=3', response['Location'])
+        self.assertIn('dia=15', response['Location'])
+        lancamento.refresh_from_db()
+        self.assertEqual(lancamento.data, date(2026, 4, 20))
 
     def test_editar_lancamento_com_erro_volta_para_o_dia_de_origem(self):
         self._login()

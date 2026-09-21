@@ -1132,6 +1132,11 @@ def lancamentos(request):
                 messages.error(request, 'Dia inválido.')
                 return _redirect_lancamentos(ano, mes, dia)
 
+            hoje = timezone.localdate()
+            if date(ano, mes, dia_post) > hoje:
+                messages.error(request, f'Dia {dia_post:02d}/{mes:02d}/{ano} está no futuro. Nada foi salvo; confira o campo Dia.')
+                return _redirect_lancamentos(hoje.year, hoje.month, hoje.day)
+
             if not servico_id:
                 messages.error(request, 'Informe o ID do serviço.')
                 return _redirect_lancamentos(ano, mes, dia_post)
@@ -1233,6 +1238,9 @@ def lancamentos(request):
             except (TypeError, ValueError, AttributeError):
                 messages.error(request, 'Data inválida para edição do lançamento.')
                 return _redirect_lancamentos(origem.year, origem.month, origem.day)
+            if data_editada > timezone.localdate():
+                messages.error(request, f'Data {data_editada:%d/%m/%Y} está no futuro. Nada foi alterado.')
+                return _redirect_lancamentos(origem.year, origem.month, origem.day)
 
             servico_id = request.POST.get('servico_id')
             servico = ServicoSalao.objects.filter(id=servico_id, ativo=True).first()
@@ -1309,10 +1317,11 @@ def lancamentos(request):
                 messages.success(request, 'Lançamento sem comissão atualizado com sucesso.')
             else:
                 messages.success(request, 'Lançamento atualizado com sucesso.')
-            # Se a data mudou na edição, o lançamento está no destino novo.
-            return _redirect_lancamentos(
-                data_editada.year, data_editada.month, data_editada.day,
-            )
+            if data_editada != origem:
+                messages.info(request, f'Lançamento movido para {data_editada:%d/%m/%Y}.')
+            # Volta para o dia de origem: seguir a data nova deixava o campo Dia
+            # preso nela e os próximos lançamentos rápidos iam para lá.
+            return _redirect_lancamentos(origem.year, origem.month, origem.day)
 
     resumo_dia, resumo_mes, inicio_mes, fim_mes, data_fixa = _resumo_lancamentos_por_competencia(ano, mes, dia)
 

@@ -191,7 +191,7 @@
 
                     <div class="col-md-3">
                         <label class="form-label">Data</label>
-                        <input class="form-control" type="date" name="data" value="{{ edit_lancamento.data|date:'Y-m-d' }}" required>
+                        <input class="form-control" type="date" name="data" value="{{ edit_lancamento.data|date:'Y-m-d' }}" max="{% now 'Y-m-d' %}" required>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Serviço</label>
@@ -607,7 +607,20 @@
         if (lancamentosDiaTitle) {
             lancamentosDiaTitle.textContent = `Lançamentos do dia ${day}/${month}/${year}`;
         }
+        // O dia fica preso na URL depois de editar ou usar ↑/↓: destaca quando não é hoje.
+        const hoje = new Date();
+        const naoEhHoje = Number(day) !== hoje.getDate()
+            || Number(month) !== hoje.getMonth() + 1
+            || Number(year) !== hoje.getFullYear();
+        diaInput.classList.toggle('border-warning', naoEhHoje);
+        diaInput.classList.toggle('bg-warning-subtle', naoEhHoje);
+        if (diaFixoLabel) {
+            diaFixoLabel.classList.toggle('text-bg-warning', naoEhHoje);
+            diaFixoLabel.classList.toggle('text-bg-light', !naoEhHoje);
+            if (naoEhHoje) diaFixoLabel.textContent += ' (não é hoje)';
+        }
     };
+    updateLabelsForDay(diaInput.value, formMesInput.value, formAnoInput.value);
 
     const updateResumoAndGrid = (payload) => {
         if (!payload) return;
