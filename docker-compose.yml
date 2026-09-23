@@ -1,0 +1,85 @@
+# Coolify (build pack Docker Compose). Postgres, Redis e WAHA são recursos
+# compartilhados do projeto `infra`, na rede predefinida `coolify`
+# (ligar "Connect To Predefined Network" na aba Network do recurso).
+# O domínio vai no serviço `web`, porta 8000.
+
+x-app: &app
+  build: .
+  restart: unless-stopped
+  init: true
+  environment:
+    TZ: America/Sao_Paulo
+    DEBUG: "False"
+    SECRET_KEY: ${SECRET_KEY:?}
+    # Sem esquema, terminando em `,localhost` (healthcheck). Ex: control.costatech.dev,localhost
+    ALLOWED_HOSTS: ${ALLOWED_HOSTS:?}
+    # Com esquema. Ex: https://control.costatech.dev
+    CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:?}
+    DATABASE_URL: ${DATABASE_URL:?}
+    # Índice do DB na URL: control = /3. Ex: redis://default:SENHA@<host-redis>:6379/3
+    REDIS_URL: ${REDIS_URL:?}
+    EMAIL_HOST: ${EMAIL_HOST:?}
+    EMAIL_PORT: ${EMAIL_PORT:?}
+    EMAIL_HOST_USER: ${EMAIL_HOST_USER:?}
+    EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:?}
+    ALERT_EMAIL_RECIPIENT: ${ALERT_EMAIL_RECIPIENT:?}
+    # Base pública para os links curtos /p/<ref>/. Ex: https://control.costatech.dev
+    APP_BASE_URL: ${APP_BASE_URL:?}
+    INFINITEPAY_HANDLE: ${INFINITEPAY_HANDLE:-}
+    INFINITEPAY_API_KEY: ${INFINITEPAY_API_KEY:-}
+    INFINITEPAY_BASE_URL: ${INFINITEPAY_BASE_URL:-}
+    # Recadastrar no InfinitePay se o domínio mudar. Ex: https://control.costatech.dev/webhooks/...
+    INFINITEPAY_WEBHOOK_URL: ${INFINITEPAY_WEBHOOK_URL:-}
+    INFINITEPAY_REDIRECT_URL: ${INFINITEPAY_REDIRECT_URL:-}
+    INFINITEPAY_ITEM_DESCRIPTION: ${INFINITEPAY_ITEM_DESCRIPTION:-}
+    WAHA_URL: ${WAHA_URL:?}
+    WAHA_API_KEY: ${WAHA_API_KEY:?}
+    WAHA_SESSION: ${WAHA_SESSION:-default}
+    WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+
+services:
+  web:
+    <<: *app
+    # Migrate só aqui; worker e beat esperam o web ficar healthy.
+    command: sh -c "python manage.py migrate --noinput && exec gunicorn app.wsgi:application --bind 0.0.0.0:8000 --timeout 120"
+    volumes:
+      - media:/app/media
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  worker:
+    <<: *app
+    command: celery -A app worker -l info --concurrency=1
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app inspect ping -d celery@$$HOSTNAME -t 10"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+
+  beat:
+    <<: *app
+    # Agenda no banco (DatabaseScheduler, ver settings): sem volume de agenda.
+    command: celery -A app beat -l info
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      # Processo do beat vivo (procura o argv "beat"; o próprio check não casa: o \x00 aqui é texto).
+      test: ["CMD", "python", "-c", "import glob,sys; sys.exit(not any(b'\\x00beat\\x00' in open(p,'rb').read() for p in glob.glob('/proc/[0-9]*/cmdline')))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  media:

@@ -17,7 +17,8 @@ SECRET_KEY = env('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG')
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS')
+# Coolify: o valor precisa terminar com `,localhost` (healthcheck bate em localhost de dentro do container).
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
 
 # Application definition
@@ -48,6 +49,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -80,7 +82,8 @@ WSGI_APPLICATION = 'app.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
-    "default": env.db(),
+    # Sem DATABASE_URL (dev local) cai no SQLite.
+    "default": env.db(default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
 }
 
 
@@ -117,7 +120,16 @@ STATIC_URL = "/static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "static")
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+MEDIA_ROOT = env("MEDIA_ROOT", default=os.path.join(BASE_DIR, "media"))
+
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # Manifest só fora do DEBUG: exige o collectstatic (feito no build da imagem).
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage" if DEBUG
+        else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
+}
 
 
 
@@ -139,9 +151,7 @@ LOGOUT_REDIRECT_URL = '/'
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 
-CSRF_TRUSTED_ORIGINS = [
-    "https://control.costatech.dev",
-]
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=["https://control.costatech.dev"])
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -149,8 +159,10 @@ SESSION_COOKIE_NAME = "control_sessionid"
 CSRF_COOKIE_NAME = "control_csrftoken"
 
 
-CELERY_BROKER_URL = 'redis://localhost:6379/3'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/3'
+# Índice do DB vai na própria URL (control = /3).
+REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/3')
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -166,7 +178,9 @@ JAZZMIN_SETTINGS = {
     "site_title": "Control Admin",
     "site_header": "Painel Administrativo",
     "site_brand": "Control",
-    "site_icon": "fas fa-laptop-code",
+    # Caminho de imagem em static (favicon), não classe de ícone: com o storage Manifest
+    # a classe "fas fa-laptop-code" derrubava o admin com 500.
+    "site_icon": None,
     "welcome_sign": "Bem-vindo ao Painel!",
     "copyright": "© 2026 Minha Empresa",
     "show_sidebar": True,

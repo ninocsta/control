@@ -14,7 +14,7 @@ class WahaService:
     """
 
     def __init__(self, base_url=None, send_url=None, token=None, api_key=None, session=None, timeout=10):
-        self.base_url = (base_url or os.getenv('WAHA_BASE_URL', '')).rstrip('/')
+        self.base_url = (base_url or os.getenv('WAHA_URL') or os.getenv('WAHA_BASE_URL', '')).rstrip('/')
         self.send_url = send_url or os.getenv('WAHA_SEND_URL', '')
         self.token = token or os.getenv('WAHA_TOKEN', '')
         self.api_key = api_key or os.getenv('WAHA_API_KEY', '')
@@ -25,7 +25,7 @@ class WahaService:
         if self.send_url:
             return self.send_url
         if not self.base_url:
-            raise ValueError('WAHA nao configurado (WAHA_BASE_URL ou WAHA_SEND_URL)')
+            raise ValueError('WAHA nao configurado (WAHA_URL ou WAHA_SEND_URL)')
         return f"{self.base_url}/api/sendText"
 
     def _build_headers(self):
@@ -60,7 +60,7 @@ class WahaService:
             digits = f'55{digits}'
 
         if not self.base_url:
-            raise ValueError('WAHA nao configurado (WAHA_BASE_URL ausente)')
+            raise ValueError('WAHA nao configurado (WAHA_URL ausente)')
 
         url = f"{self.base_url}/api/contacts/check-exists"
         params = {'phone': digits, 'session': self.session}

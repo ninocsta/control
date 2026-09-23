@@ -1,9 +1,12 @@
 from django.contrib import admin
 from django.urls import path, include
 from invoices import views as invoice_views
+from .views import health, media
 
 
 urlpatterns = [
+    path('health/', health, name='health'),
+    path('media/<path:path>', media, name='media'),
     path('admin/', admin.site.urls),
     path('salao/', include(('salao.urls', 'salao'), namespace='salao')),
     path('financeiro/', include('infra.financeiro.urls')),
