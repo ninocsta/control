@@ -1,7 +1,8 @@
 # Coolify (build pack Docker Compose). Postgres, Redis e WAHA são recursos
 # compartilhados do projeto `infra`, na rede predefinida `coolify`
 # (ligar "Connect To Predefined Network" na aba Network do recurso).
-# O domínio vai no serviço `web`, porta 8000.
+# Domínio no serviço `web` com a porta: https://control.costatech.dev:8000 (o Traefik
+# usa o sufixo como porta interna; não publica nada).
 
 x-app: &app
   build: .
