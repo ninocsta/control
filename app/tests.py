@@ -20,5 +20,20 @@ class MediaHealthTests(TestCase):
         r = self.client.get('/media/c.pdf')
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(r['Cache-Control'], 'private')
         self.assertFalse(r.get('Content-Disposition', '').startswith('attachment'))
         self.assertEqual(self.client.get('/media/x.html')['Content-Disposition'], 'attachment')
+
+
+class RunJobTests(TestCase):
+    def test_roda_job_pelo_nome(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('run_job', 'marcar_invoices_atrasados', stdout=out)
+        self.assertIn("marcar_invoices_atrasados: {'data_execucao'", out.getvalue())
+
+    def test_nome_invalido(self):
+        from django.core.management import CommandError, call_command
+        with self.assertRaises(CommandError):
+            call_command('run_job', 'nao_existe')

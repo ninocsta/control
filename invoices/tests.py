@@ -71,7 +71,7 @@ class InvoicesWebhookQueueCleanupTests(TestCase):
             order_nsu='ORDER-123',
         )
 
-    @patch('invoices.views.task_enviar_confirmacao_imediata.delay')
+    @patch('invoices.views.task_enviar_confirmacao_imediata')
     def test_webhook_remove_cobrancas_pendentes_e_mantem_confirmacao(self, delay_mock):
         cobranca = MessageQueue.objects.create(
             invoice=self.invoice,
@@ -90,11 +90,12 @@ class InvoicesWebhookQueueCleanupTests(TestCase):
             status='pendente',
         )
 
-        response = self.client.post(
-            reverse('invoices:infinitepay_webhook'),
-            data=json.dumps({'order_nsu': self.invoice.order_nsu}),
-            content_type='application/json',
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                reverse('invoices:infinitepay_webhook'),
+                data=json.dumps({'order_nsu': self.invoice.order_nsu}),
+                content_type='application/json',
+            )
 
         self.assertEqual(response.status_code, 200)
         self.invoice.refresh_from_db()
@@ -133,7 +134,7 @@ class InvoicesWahaQueueProcessingTests(TestCase):
             status='pendente',
         )
 
-        resultado = task_processar_fila_waha.run(limite=10)
+        resultado = task_processar_fila_waha(limite=10)
 
         self.assertEqual(resultado['processadas'], 1)
         self.assertEqual(resultado['enviadas'], 0)
@@ -167,7 +168,7 @@ class InvoicesWahaQueueProcessingTests(TestCase):
             status='pendente',
         )
 
-        resultado = task_processar_fila_waha.run(limite=10)
+        resultado = task_processar_fila_waha(limite=10)
 
         self.assertEqual(resultado['processadas'], 1)
         self.assertEqual(resultado['enviadas'], 1)

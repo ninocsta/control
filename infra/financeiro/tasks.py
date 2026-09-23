@@ -1,12 +1,11 @@
 """
-Tarefas assíncronas do Celery para o módulo financeiro.
+Jobs do módulo financeiro. Rodam por `manage.py run_job` (Scheduled Task do Coolify).
 
 Tasks:
 - Gerar período do mês atual
 - Fechar período do mês anterior
 - Alertar vencimentos de infraestrutura
 """
-from celery import shared_task
 from datetime import date, timedelta
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -25,8 +24,7 @@ from infra.backups.models import VPSBackupCost
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=3)
-def task_gerar_periodo_mes_atual(self):
+def task_gerar_periodo_mes_atual():
     """
     Cria o período financeiro do mês atual se não existir.
     
@@ -54,8 +52,7 @@ def task_gerar_periodo_mes_atual(self):
         return {'status': 'exists', 'periodo': str(periodo)}
 
 
-@shared_task(bind=True, max_retries=3)
-def task_fechar_periodo_mes_anterior(self):
+def task_fechar_periodo_mes_anterior():
     """
     Fecha o período financeiro do mês anterior se ainda estiver aberto.
     
@@ -81,7 +78,7 @@ def task_fechar_periodo_mes_anterior(self):
         # Fechar período
         resultado = fechar_periodo(
             periodo_id=periodo.id,
-            usuario='Sistema Automático (Celery)'
+            usuario='Sistema Automático (Scheduled Task)'
         )
         
         logger.info(f"Período {periodo} fechado com sucesso: {resultado}")
@@ -96,8 +93,7 @@ def task_fechar_periodo_mes_anterior(self):
         return {'status': 'error', 'message': str(e)}
 
 
-@shared_task(bind=True)
-def task_alertar_vencimentos(self):
+def task_alertar_vencimentos():
     """
     Envia alertas para custos de infraestrutura que vencem em breve.
     

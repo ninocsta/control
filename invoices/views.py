@@ -105,7 +105,8 @@ def infinitepay_webhook(request):
 
             mensagem, created = criar_mensagem_confirmacao(invoice)
             if mensagem:
-                task_enviar_confirmacao_imediata.delay(mensagem.id)
+                # Depois do commit: o pagamento fica gravado mesmo se o WAHA falhar.
+                transaction.on_commit(lambda: task_enviar_confirmacao_imediata(mensagem.id), robust=True)
 
     except Invoice.DoesNotExist:
         return HttpResponse(status=404)

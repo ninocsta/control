@@ -1,7 +1,7 @@
 # Documentacao Geral - Control
 
 ## Visao geral
-Aplicacao Django com Celery para cobranca mensal de clientes, integracao com InfinitePay, fila de mensagens (WAHA) e fechamento financeiro por contrato.
+Aplicacao Django para cobranca mensal de clientes, integracao com InfinitePay, fila de mensagens (WAHA) e fechamento financeiro por contrato.
 
 Objetivo principal:
 - 1 invoice mensal por cliente
@@ -52,12 +52,28 @@ Objetivo principal:
   - no dia
   - confirmacao de pagamento
 
-## Tasks (Celery)
-- `task_gerar_invoices_mes_atual`: gera invoices mensais por cliente.
-- `task_marcar_invoices_atrasados`: marca pendentes vencidas como atrasadas.
-- `task_agendar_mensagens_cobranca`: agenda mensagens conforme vencimento.
-- `task_processar_fila_waha`: envia mensagens pendentes via WAHA.
-- `task_processar_checkouts_infinitepay`: retry de checkouts pendentes.
+## Jobs periódicos (Scheduled Tasks do Coolify)
+Sem Celery/Redis: cada job é uma função em `invoices/tasks.py` ou
+`infra/financeiro/tasks.py`, rodada por `python manage.py run_job <nome>`.
+No Coolify: recurso > Scheduled Tasks > Add, container `web`, cron abaixo.
+O cron do Coolify segue o timezone do servidor (Servers > <servidor> > General >
+Timezone): deixar `America/Sao_Paulo`, senão converter os horários para UTC (+3h).
+
+| Nome | Comando | Cron (America/Sao_Paulo) |
+|---|---|---|
+| gerar-periodo-mes-atual | `python manage.py run_job gerar_periodo_mes_atual` | `5 0 1 * *` |
+| gerar-invoices-mes-atual | `python manage.py run_job gerar_invoices_mes_atual` | `10 0 1 * *` |
+| fechar-periodo-mes-anterior | `python manage.py run_job fechar_periodo_mes_anterior` | `0 2 1 * *` |
+| gerar-checkouts-infinitepay | `python manage.py run_job processar_checkouts_infinitepay` | `40 7,15 * * *` |
+| alertar-vencimentos | `python manage.py run_job alertar_vencimentos` | `0 8 * * *` |
+| marcar-invoices-atrasados | `python manage.py run_job marcar_invoices_atrasados` | `0 9 * * *` |
+| agendar-mensagens-cobranca | `python manage.py run_job agendar_mensagens_cobranca` | `10 9 * * *` |
+| agendar-mensagens-atraso | `python manage.py run_job agendar_mensagens_atraso` | `20 9 * * *` |
+| processar-fila-waha | `python manage.py run_job processar_fila_waha` | `0 9,11,13,15,17 * * 1-5` |
+
+A confirmação de pagamento (`task_enviar_confirmacao_imediata`) sai na própria
+requisição do webhook da InfinitePay, depois do commit; se o WAHA falhar, a
+mensagem fica `pendente` e o `processar_fila_waha` reenvia.
 
 ## Fechamento financeiro por contrato
 - Receita por contrato vem de `InvoiceContrato`.

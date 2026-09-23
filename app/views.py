@@ -21,6 +21,7 @@ def media(request, path):
     """Media nunca pública (contratos): só com login."""
     response = serve(request, path, document_root=settings.MEDIA_ROOT)  # safe_join barra ../
     response['X-Content-Type-Options'] = 'nosniff'
+    response['Cache-Control'] = 'private'  # conteúdo com login: nunca em cache compartilhado
     if mimetypes.guess_type(path)[0] not in INLINE_MEDIA_TYPES:
         response['Content-Disposition'] = 'attachment'
     return response

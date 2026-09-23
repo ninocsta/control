@@ -32,8 +32,6 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    'django_celery_beat',
-
     # Local apps
     'clientes',
     'contratos',
@@ -159,19 +157,6 @@ SESSION_COOKIE_NAME = "control_sessionid"
 CSRF_COOKIE_NAME = "control_csrftoken"
 
 
-# Índice do DB vai na própria URL (control = /3).
-REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/3')
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TIMEZONE = 'America/Sao_Paulo'
-CELERY_TASK_ALWAYS_EAGER = False
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
-CELERY_ACKS_LATE = True
-CELERY_TASK_REJECT_ON_WORKER_LOST = True
-CELERY_RESULT_EXPIRES = 3600  # 1 hora (ajuste conforme necessidade)
 
 JAZZMIN_SETTINGS = {
     # 📌 Branding

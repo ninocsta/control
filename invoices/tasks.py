@@ -1,7 +1,7 @@
 """
-Tarefas assíncronas do Celery para o módulo de invoices.
+Jobs do módulo de invoices. Rodam por `manage.py run_job` (Scheduled Task do Coolify)
+ou direto de uma view (confirmação de pagamento).
 """
-from celery import shared_task
 from datetime import date
 from django.utils import timezone
 from django.db import models
@@ -22,8 +22,7 @@ from invoices.services.waha_service import WahaService, ContactNotFoundError
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=3)
-def task_gerar_invoices_mes_atual(self):
+def task_gerar_invoices_mes_atual():
     """
     Gera invoices de cobrança para todos os clientes com contratos ativos.
     
@@ -48,8 +47,7 @@ def task_gerar_invoices_mes_atual(self):
     return resultado
 
 
-@shared_task(bind=True, max_retries=3)
-def task_marcar_invoices_atrasados(self):
+def task_marcar_invoices_atrasados():
     """
     Marca invoices como 'atrasado' quando passam do vencimento.
     
@@ -106,8 +104,7 @@ def task_marcar_invoices_atrasados(self):
     return resultado
 
 
-@shared_task(bind=True, max_retries=3)
-def task_agendar_mensagens_cobranca(self):
+def task_agendar_mensagens_cobranca():
     """
     Agenda mensagens de cobrança para invoices pendentes.
 
@@ -134,15 +131,13 @@ def task_agendar_mensagens_cobranca(self):
     return resultado
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def task_enviar_confirmacao_imediata(self, messagequeue_id):
+def task_enviar_confirmacao_imediata(messagequeue_id):
     """
     Envia imediatamente a mensagem de confirmacao de pagamento via WAHA.
 
-    Disparada pelo webhook da InfinitePay logo apos registrar o pagamento.
-    Faz ate 3 tentativas com 30s de intervalo.
-    Caso todas falhem, o registro permanece na fila com status 'erro' e
-    o task_processar_fila_waha horario tenta novamente como fallback.
+    Chamada pelo webhook da InfinitePay depois do commit do pagamento, na
+    própria requisição (uma tentativa, timeout do WahaService = 10s). Se falhar,
+    a mensagem continua 'pendente' e o task_processar_fila_waha reenvia.
     """
     try:
         mensagem = MessageQueue.objects.select_related('invoice', 'invoice__cliente').get(
@@ -171,13 +166,12 @@ def task_enviar_confirmacao_imediata(self, messagequeue_id):
         logger.error('Confirmacao %s: numero nao encontrado no WhatsApp (%s)', messagequeue_id, exc)
         registrar_falha_envio(mensagem, max_tentativas=1)
     except Exception as exc:
-        logger.warning('Falha ao enviar confirmacao %s (tentativa %s): %s', messagequeue_id, self.request.retries + 1, exc)
+        # Fica 'pendente' (até 3 tentativas): task_processar_fila_waha reenvia.
+        logger.warning('Falha ao enviar confirmacao %s: %s', messagequeue_id, exc)
         registrar_falha_envio(mensagem)
-        raise self.retry(exc=exc)
 
 
-@shared_task(bind=True, max_retries=3)
-def task_processar_fila_waha(self, limite=1):
+def task_processar_fila_waha(limite=1):
     """
     Processa a fila de mensagens pendentes e envia via WAHA.
 
@@ -242,8 +236,7 @@ def task_processar_fila_waha(self, limite=1):
     }
 
 
-@shared_task(bind=True, max_retries=3)
-def task_agendar_mensagens_atraso(self):
+def task_agendar_mensagens_atraso():
     """
     Agenda mensagens de atraso a cada 3 dias apos o vencimento.
 
@@ -265,8 +258,7 @@ def task_agendar_mensagens_atraso(self):
     return resultado
 
 
-@shared_task(bind=True, max_retries=3)
-def task_processar_checkouts_infinitepay(self, limite=100):
+def task_processar_checkouts_infinitepay(limite=100):
     """
     Reprocessa invoices pendentes sem checkout InfinitePay (retry seguro).
 
