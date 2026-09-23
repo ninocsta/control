@@ -35,6 +35,10 @@ x-app: &app
     WAHA_API_KEY: ${WAHA_API_KEY:?}
     WAHA_SESSION: ${WAHA_SESSION:-default}
     WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    # Bot Telegram global (Team Shared Variables); vazio = sem avisos.
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    TELEGRAM_THREAD_ID: ${TELEGRAM_THREAD_ID:-}
 
 services:
   web:

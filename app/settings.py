@@ -218,9 +218,10 @@ LOGGING = {
     },
     "handlers": {
         "console": {"class": "logging.StreamHandler", "stream": "ext://sys.stdout", "formatter": "simple"},
+        "telegram": {"class": "app.notify.TelegramErrorHandler", "level": "ERROR"},
     },
     "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
-        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django.request": {"handlers": ["console", "telegram"], "level": "ERROR", "propagate": False},
     },
 }

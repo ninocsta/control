@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.db import models
 import logging
 
+from app.notify import notify
 from invoices.models import Invoice, MessageQueue
 from invoices.services.invoice_service import gerar_invoices_mensais
 from invoices.services.infinitepay_service import InfinitePayService
@@ -228,6 +229,9 @@ def task_processar_fila_waha(limite=1):
             logger.error('Falha ao enviar mensagem %s: %s', mensagem.id, exc)
             registrar_falha_envio(mensagem)
             falhas += 1
+
+    if falhas:
+        notify(f"⚠️ Fila WAHA: {falhas} falha(s) de envio de cobrança ({enviados} enviada(s))")
 
     return {
         'processadas': len(mensagens),

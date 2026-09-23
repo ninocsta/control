@@ -10,6 +10,8 @@ from datetime import date, timedelta
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
+
+from app.notify import notify
 from django.conf import settings
 import logging
 
@@ -207,6 +209,9 @@ def task_alertar_vencimentos():
     
     if alertas:
         logger.warning(f"Encontrados {len(alertas)} vencimentos próximos")
+        total = sum(a['valor'] for a in alertas)
+        itens = "\n".join(f"- {a['tipo']} {a['nome']}: {a['vencimento']} ({a['dias_restantes']}d)" for a in alertas[:20])
+        notify(f"🔔 {len(alertas)} vencimento(s) próximo(s) - R$ {total:.2f}\n{itens}")
         
         # Enviar email com os alertas
         try:
