@@ -1,0 +1,40 @@
+{% load painel %}<tr id="fatura-{{ f.pk }}" class="{% if f.status == 'cancelado' %}dim{% endif %}">
+  <td>
+    <a href="{% url 'painel:cliente' f.cliente_id %}" class="cell-main">{{ f.cliente.nome }}</a>
+    <div class="cell-sub">{% if f.tipo == 'avulsa' %}<span class="tag">avulsa</span> {% endif %}{{ f.descricao|default:f.cliente.descricao_cobranca|default:"Mensalidade" }}</div>
+  </td>
+  <td class="num">{{ f.valor_total|brl }}</td>
+  <td class="mono small">{{ f.vencimento|date:"d/m" }}</td>
+  <td>
+    <span class="badge {{ f.status }}">{% if f.em_aberto and f.vencimento < hoje %}vencida{% else %}{{ f.get_status_display|lower }}{% endif %}</span>
+    {% if f.status == 'pago' %}<div class="cell-sub">{{ f.pago_em|date:"d/m" }}{% if f.capture_method %} · {{ f.capture_method }}{% endif %}</div>{% endif %}
+    {% if f.em_aberto and not f.checkout_url %}<div class="cell-sub d-warn">sem link</div>{% endif %}
+  </td>
+  <td class="acts">
+    {% if f.em_aberto %}
+    <div class="pop" x-data="{open: false}" @click.outside="open = false" @keydown.escape="open = false">
+      <button type="button" class="btn btn-sm btn-ok" @click="open = !open">Recebi</button>
+      <div class="pop-panel" x-show="open" x-cloak>
+        <form hx-post="{% url 'painel:fatura_acao' f.pk 'pagar' %}" hx-target="#fatura-{{ f.pk }}" hx-swap="outerHTML" class="stack" style="gap:10px">
+          <div class="field"><label class="small">Pago em (Pix direto, dinheiro...)</label><input type="date" name="pago_em" class="input" value="{% now 'Y-m-d' %}"></div>
+          <button class="btn btn-primary btn-sm">Registrar e avisar cliente</button>
+        </form>
+      </div>
+    </div>
+    <div class="pop" x-data="{open: false}" @click.outside="open = false" @keydown.escape="open = false">
+      <button type="button" class="btn btn-sm btn-ghost" @click="open = !open" title="Mais ações">⋯</button>
+      <div class="pop-panel" x-show="open" x-cloak style="min-width:200px">
+        <div class="stack" style="gap:4px">
+          <button class="btn btn-sm btn-ghost" style="justify-content:flex-start" hx-post="{% url 'painel:fatura_acao' f.pk 'lembrar' %}" hx-target="#fatura-{{ f.pk }}" hx-swap="outerHTML" hx-confirm="Mandar lembrete agora no WhatsApp para {{ f.cliente.nome }}?">Lembrar agora no WhatsApp</button>
+          <button class="btn btn-sm btn-ghost" style="justify-content:flex-start" hx-post="{% url 'painel:fatura_acao' f.pk 'link' %}" hx-target="#fatura-{{ f.pk }}" hx-swap="outerHTML">Refazer link de pagamento</button>
+          <a class="btn btn-sm btn-ghost" style="justify-content:flex-start" href="{% url 'painel:fatura' f.pk %}">Detalhes / editar</a>
+          <button class="btn btn-sm btn-danger" style="justify-content:flex-start" hx-post="{% url 'painel:fatura_acao' f.pk 'cancelar' %}" hx-target="#fatura-{{ f.pk }}" hx-swap="outerHTML" hx-confirm="Cancelar esta fatura? O link de pagamento deixa de funcionar.">Cancelar fatura</button>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <a href="{% url 'painel:fatura' f.pk %}" class="btn btn-sm btn-ghost">Detalhes</a>
+    {% endif %}
+  </td>
+</tr>
+{% if request.headers.HX_Request %}{% include 'painel/_toasts.html' with oob=True %}{% endif %}

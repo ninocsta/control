@@ -9,6 +9,16 @@ Objetivo principal:
 - receita por contrato via InvoiceContrato
 - fechamento financeiro calcula lucro por contrato
 
+## Telas (app `painel`, raiz do site, login de staff em /login/)
+- Início: recebido/a receber/vencido do mês, atrasadas, próximos 15 dias, saúde (links, telefones, fila), últimos 6 meses.
+- Cobranças (?mes=AAAA-MM): faturas do mês com ações (Recebi com data, lembrar no WhatsApp,
+  refazer link, cancelar), contratos ainda sem mensalidade (Gerar agora), em aberto de outros meses.
+- Clientes / ficha: contratos com valor vigente, reajustes, encerrar (desvincula recursos), faturas, recursos, margem.
+- Agenda: faturas, renovações, reajustes e fim de contrato num lugar só; "Renovei" avança o vencimento.
+- Recursos: infra com custo/mês, quem paga, renovação; ficha com histórico de custos e contratos vinculados.
+- Financeiro: períodos, detalhe por contrato, despesas extras, fechar mês.
+- O admin do Django continua em /admin/ como reserva.
+
 ## Modelos principais
 - Cliente: dados do cliente e `vencimento_padrao` (1-28).
 - Contrato: contrato mensal com `valor_mensal`, `data_inicio`, `data_fim`.
@@ -16,6 +26,11 @@ Objetivo principal:
 - InvoiceContrato: vinculo invoice x contrato (receita por contrato).
 - MessageQueue: fila de mensagens de cobranca e confirmacao.
 - PeriodoFinanceiro / ContratoSnapshot: controle e fechamento financeiro por contrato.
+- ContratoReajuste: valor do contrato a partir de um mês.
+- Recurso / CustoRecurso / RecursoContrato (`infra.recursos`): toda a infra (domínio, VPS, hosting,
+  backup, e-mail, outro). Vínculo com contrato tem datas; recurso sem vínculo próprio (backup) segue o `pai`.
+  Os apps `infra.dominios/hosting/vps/backups/emails` são legado: dados copiados na migração
+  `recursos.0002`, fora do admin e do código. Remover numa versão futura (drop das tabelas).
 
 ## Regras de faturamento
 - Mensalidade (`Invoice.tipo='mensal'`): 1 fatura por cliente agrupando os contratos do mes.
@@ -98,7 +113,8 @@ mensagem fica `pendente` e o `processar_fila_waha` reenvia.
 ## Fechamento financeiro por contrato
 - Receita por contrato vem de `InvoiceContrato` (competencia; faturas canceladas ficam fora).
 - Custo usado em periodo fechado nao muda valor; para trocar, encerrar (`data_fim`) e criar outro.
-- Custos sao rateados no fechamento (infra/financeiro/services).
+- Custos de `CustoRecurso` (exceto `pago_pelo_cliente`) divididos igualmente entre os contratos
+  vinculados no mês (infra/financeiro/services).
 - Gera `ContratoSnapshot` com receita, custo e margem por contrato.
 
 ## Variaveis de ambiente principais

@@ -1,0 +1,18 @@
+{% load painel %}<div class="item">
+  <div class="when">{{ e.data|date:"d/m" }}<div class="{% if e.dias < 0 %}d-neg{% elif e.dias <= 7 %}d-warn{% else %}muted{% endif %}" style="font-size:11px">{{ e.dias|quando }}</div></div>
+  <div class="body">
+    <div class="t1">
+      {% if e.tipo == 'fatura' %}<a href="{% url 'painel:fatura' e.obj.pk %}" class="cell-main">{{ e.titulo }}</a>
+      {% elif e.tipo == 'recurso' %}<a href="{% url 'painel:recurso' e.obj.recurso_id %}" class="cell-main">{{ e.titulo }}</a>
+      {% else %}<a href="{% url 'painel:cliente' e.cliente_id %}" class="cell-main">{{ e.titulo }}</a>{% endif %}
+    </div>
+    <div class="t2">{{ e.detalhe }}</div>
+  </div>
+  <span class="badge {% if e.tipo == 'fatura' %}info{% elif e.tipo == 'recurso' %}warn{% else %}{% endif %} hide-sm">{{ e.tipo }}</span>
+  {% if e.tipo == 'recurso' %}
+  <form method="post" action="{% url 'painel:custo_renovar' e.obj.pk %}" class="inline">
+    {% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <button class="btn btn-sm" title="Já paguei a renovação: avança {{ e.obj.periodo_meses }} mês(es)">Renovei</button>
+  </form>
+  {% endif %}
+</div>

@@ -1,0 +1,24 @@
+{% extends 'painel/base.html' %}
+{% block title %}Agenda{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Agenda</h1>
+    <div class="sub">Faturas, renovações de recursos, reajustes e fim de contratos. O resumo vai pro Telegram todo dia às 8h.</div>
+  </div>
+  <div class="actions">
+    {% for d in opcoes %}<a href="?dias={{ d }}" class="btn btn-sm {% if dias == d %}btn-primary{% else %}btn-ghost{% endif %}">{{ d }} dias</a>{% endfor %}
+  </div>
+</div>
+<div class="card">
+  {% if eventos %}
+  <div class="list">
+    {% regroup eventos by data|date:"F/Y" as meses %}
+    {% for m in meses %}
+      <div class="group-label">{{ m.grouper }}</div>
+      {% for e in m.list %}{% include 'painel/_evento.html' %}{% endfor %}
+    {% endfor %}
+  </div>
+  {% else %}<div class="card-empty">Nada nos próximos {{ dias }} dias.</div>{% endif %}
+</div>
+{% endblock %}

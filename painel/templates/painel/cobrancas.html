@@ -1,0 +1,52 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}Cobranças{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="row">
+      <a href="?mes={{ anterior }}" class="btn btn-sm btn-ghost" title="Mês anterior">←</a>
+      <h1>Cobranças · {{ resumo.rotulo }}</h1>
+      <a href="?mes={{ seguinte }}" class="btn btn-sm btn-ghost" title="Próximo mês">→</a>
+    </div>
+    <div class="sub">Recebido {{ resumo.recebido|brl }} de {{ resumo.faturado|brl }} · previsto pelos contratos {{ resumo.previsto|brl }}</div>
+  </div>
+  <div class="actions">
+    <a href="{% url 'painel:avulsa_nova' %}" class="btn">+ Avulsa</a>
+  </div>
+</div>
+
+{% if a_gerar %}
+<div class="card" style="margin-bottom:16px;border-color:var(--accent)">
+  <div class="card-body row">
+    <div class="grow">
+      <b>{{ a_gerar|length }} contrato(s) ainda sem mensalidade neste mês</b>
+      <div class="small muted">{% for c in a_gerar %}{{ c.cliente.nome }} · {{ c.nome }}{% if not forloop.last %}, {% endif %}{% endfor %}. O sistema gera sozinho todo dia 00:10.</div>
+    </div>
+    {% if pode_gerar %}
+    <form method="post" action="{% url 'painel:gerar_mensalidades' %}" class="inline">{% csrf_token %}<input type="hidden" name="mes" value="{{ mes_param }}">
+      <button class="btn btn-primary btn-sm">Gerar agora</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  {% if faturas %}
+  <div class="table-wrap"><table class="t">
+    <thead><tr><th>Cliente</th><th class="num">Valor</th><th>Venc.</th><th>Status</th><th></th></tr></thead>
+    <tbody>{% for f in faturas %}{% include 'painel/_fatura_linha.html' %}{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="card-empty">Nenhuma fatura neste mês.</div>{% endif %}
+</div>
+
+{% if atrasadas_antes %}
+<div class="card" style="margin-top:16px">
+  <div class="card-head"><h2>Em aberto de outros meses</h2><span class="badge danger">{{ atrasadas_antes|length }}</span></div>
+  <div class="table-wrap"><table class="t">
+    <tbody>{% for f in atrasadas_antes %}{% include 'painel/_fatura_linha.html' %}{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+{% endblock %}

@@ -113,6 +113,7 @@ class ContratoSnapshot(models.Model):
     custo_vps = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     custo_backups = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     custo_emails = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    custo_outros = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     custo_despesas_adicionais = models.DecimalField(
         max_digits=10, 
         decimal_places=2, 

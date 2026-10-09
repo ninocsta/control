@@ -9,9 +9,8 @@ urlpatterns = [
     path('media/<path:path>', media, name='media'),
     path('admin/', admin.site.urls),
     path('salao/', include(('salao.urls', 'salao'), namespace='salao')),
-    path('financeiro/', include('infra.financeiro.urls')),
     path('p/<str:ref>/', invoice_views.invoice_checkout_redirect, name='invoice_checkout_redirect'),
     path('webhooks/', include('invoices.urls')),
     path('i18n/', include('django.conf.urls.i18n')),
-    path('', include(('infra.financeiro.urls', 'financeiro'), namespace='financeiro_root')),
+    path('', include('painel.urls')),
 ]

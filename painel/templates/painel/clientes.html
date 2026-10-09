@@ -1,0 +1,33 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}Clientes{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Clientes</h1>
+    <div class="sub">Receita mensal recorrente: {{ total_mensal|brl }}</div>
+  </div>
+  <div class="actions">
+    {% if mostrar_inativos %}<a href="?" class="btn btn-ghost">Só ativos</a>{% else %}<a href="?todos=1" class="btn btn-ghost">Mostrar inativos</a>{% endif %}
+    <a href="{% url 'painel:cliente_novo' %}" class="btn btn-primary">+ Cliente</a>
+  </div>
+</div>
+<div class="card">
+  <div class="table-wrap"><table class="t">
+    <thead><tr><th>Cliente</th><th class="num">Mensal</th><th class="num">Em aberto</th><th class="hide-sm">Vence dia</th><th class="hide-sm">Contato</th></tr></thead>
+    <tbody>
+    {% for l in linhas %}
+    <tr class="{% if not l.c.ativo %}dim{% endif %}">
+      <td><a href="{% url 'painel:cliente' l.c.pk %}" class="cell-main">{{ l.c.nome }}</a>
+        <div class="cell-sub">{% for ct in l.contratos %}{{ ct.nome }}{% if not forloop.last %}, {% endif %}{% empty %}sem contrato vigente{% endfor %}{% if not l.c.ativo %} · inativo{% endif %}</div></td>
+      <td class="num">{{ l.mensal|brl }}</td>
+      <td class="num">{% if l.atrasado %}<span class="d-neg">{{ l.em_aberto|brl }}</span>{% elif l.em_aberto %}{{ l.em_aberto|brl }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="hide-sm mono small">{{ l.c.vencimento_padrao }}</td>
+      <td class="hide-sm small">{% if l.c.telefone %}{{ l.c.telefone }}{% else %}<span class="d-warn">sem telefone</span>{% endif %}</td>
+    </tr>
+    {% empty %}<tr><td colspan="5" class="card-empty">Nenhum cliente.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

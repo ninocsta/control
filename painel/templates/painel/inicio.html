@@ -1,0 +1,90 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}Início{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ resumo.rotulo|capfirst }}</h1>
+    <div class="sub">{{ resumo.qtd_pagas }} de {{ resumo.qtd_faturas }} fatura(s) paga(s) no mês</div>
+  </div>
+  <div class="actions">
+    <a href="{% url 'painel:avulsa_nova' %}" class="btn">+ Cobrança avulsa</a>
+    <a href="{% url 'painel:cobrancas' %}" class="btn btn-primary">Ver cobranças</a>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi ok">
+    <div class="label">Recebido</div>
+    <div class="v">{{ resumo.recebido|brl }}</div>
+    <div class="bar"><span style="width: {{ resumo.pct_recebido }}%"></span></div>
+    <div class="h">{{ resumo.pct_recebido }}% de {{ resumo.faturado|brl }} faturado</div>
+  </div>
+  <div class="kpi">
+    <div class="label">A receber</div>
+    <div class="v">{{ resumo.a_receber|brl }}</div>
+    <div class="h">contratos do mês: {{ resumo.previsto|brl }}</div>
+  </div>
+  <div class="kpi {% if resumo.vencido %}danger{% endif %}">
+    <div class="label">Vencido no mês</div>
+    <div class="v">{{ resumo.vencido|brl }}</div>
+    <div class="h">{{ resumo.qtd_vencido }} fatura(s)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Custo · margem</div>
+    <div class="v">{{ resumo.margem|brl }}</div>
+    <div class="h">custo {{ resumo.custo|brl }}</div>
+  </div>
+</div>
+
+{% if saude %}
+<div class="card" style="margin-bottom:16px;border-color:var(--warn)">
+  <div class="card-head"><h2>⚠ Precisa de atenção</h2></div>
+  <div class="list">
+    {% for s in saude %}
+    <div class="item"><span class="badge warn mono">{{ s.qtd }}</span><div class="body"><div class="t1">{{ s.titulo }}</div><div class="t2">{{ s.dica }}</div></div></div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="grid g-main">
+  <div class="stack">
+    <div class="card">
+      <div class="card-head"><h2>Em atraso</h2>{% if atrasadas %}<span class="badge danger">{{ atrasadas|length }}</span>{% endif %}</div>
+      {% if atrasadas %}
+      <div class="table-wrap"><table class="t"><tbody>
+        {% for f in atrasadas %}
+        <tr>
+          <td><a href="{% url 'painel:fatura' f.pk %}" class="cell-main">{{ f.cliente.nome }}</a><div class="cell-sub">{{ f.mes_referencia|stringformat:"02d" }}/{{ f.ano_referencia }} · venceu {{ f.vencimento|date:"d/m" }}</div></td>
+          <td class="num">{{ f.valor_total|brl }}</td>
+          <td class="num d-neg small">{{ f.vencimento|timesince:hoje|default:"" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody></table></div>
+      {% else %}<div class="card-empty">Ninguém em atraso. 👌</div>{% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Últimos meses</h2><a href="{% url 'painel:financeiro' %}" class="small">financeiro →</a></div>
+      <div class="table-wrap"><table class="t">
+        <thead><tr><th>Mês</th><th class="num">Faturado</th><th class="num">Recebido</th><th class="num hide-sm">Custo</th><th class="num">Margem</th></tr></thead>
+        <tbody>
+        {% for h in historico %}
+        <tr><td>{{ h.rotulo }}{% if not h.fechado %} <span class="muted small">·aberto</span>{% endif %}</td>
+          <td class="num">{{ h.faturado|brl }}</td><td class="num">{{ h.recebido|brl }}</td>
+          <td class="num hide-sm">{{ h.custo|brl }}</td><td class="num {% if h.margem < 0 %}d-neg{% endif %}">{{ h.margem|brl }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Próximos 15 dias</h2><a href="{% url 'painel:agenda' %}" class="small">agenda →</a></div>
+    {% if agenda %}
+      <div class="list">{% for e in agenda %}{% include 'painel/_evento.html' %}{% endfor %}</div>
+    {% else %}<div class="card-empty">Nada vencendo.</div>{% endif %}
+  </div>
+</div>
+{% endblock %}

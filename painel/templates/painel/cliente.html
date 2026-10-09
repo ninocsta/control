@@ -1,0 +1,134 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}{{ c.nome }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a href="{% url 'painel:clientes' %}" class="small">← clientes</a>
+    <div class="row" style="margin-top:6px"><h1>{{ c.nome }}</h1>{% if not c.ativo %}<span class="badge">inativo</span>{% endif %}</div>
+    <div class="sub">
+      {% if c.telefone %}{{ c.telefone }}{% else %}<span class="d-warn">sem telefone (não recebe lembretes)</span>{% endif %}
+      {% if c.email %} · {{ c.email }}{% endif %} · vence dia {{ c.vencimento_padrao }}{% if c.descricao_cobranca %} · “{{ c.descricao_cobranca }}”{% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <a href="{% url 'painel:cliente_editar' c.pk %}" class="btn">Editar</a>
+    <a href="{% url 'painel:avulsa_nova' %}?cliente={{ c.pk }}" class="btn">+ Avulsa</a>
+    <a href="{% url 'painel:contrato_novo' %}?cliente={{ c.pk }}" class="btn btn-primary">+ Contrato</a>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi {% if em_aberto %}danger{% endif %}"><div class="label">Em aberto</div><div class="v">{{ em_aberto|brl }}</div></div>
+  {% with s=snaps.0 %}{% if s %}
+  <div class="kpi"><div class="label">Margem {{ s.periodo__mes|stringformat:"02d" }}/{{ s.periodo__ano }}</div><div class="v">{{ s.margem|brl }}</div><div class="h">receita {{ s.receita|brl }} · custo {{ s.custo|brl }}</div></div>
+  {% endif %}{% endwith %}
+</div>
+
+<div class="grid g-main">
+  <div class="stack">
+    <div class="card">
+      <div class="card-head"><h2>Contratos</h2></div>
+      {% for ct in contratos %}
+      <div class="card-body" style="border-bottom:1px solid var(--line){% if ct.encerrado %};opacity:.6{% endif %}" x-data="{reaj:false, enc:false}">
+        <div class="row">
+          <div class="grow">
+            <div class="cell-main">{{ ct.nome }} {% if ct.encerrado %}<span class="badge">encerrado</span>{% endif %}</div>
+            <div class="cell-sub">desde {{ ct.data_inicio|date:"d/m/Y" }}{% if ct.data_fim %} até {{ ct.data_fim|date:"d/m/Y" }}{% endif %}{% if ct.descricao %} · {{ ct.descricao }}{% endif %}</div>
+          </div>
+          <div class="num"><b class="mono">{{ ct.valor_hoje|brl }}</b><div class="cell-sub">por mês</div></div>
+        </div>
+        {% if ct.reajustes_futuros %}
+        <div style="margin-top:8px" class="stack">
+          {% for r in ct.reajustes_futuros %}
+          <div class="row small"><span class="badge info">a partir de {{ r.vigente_desde|date:"m/Y" }}</span><b class="mono">{{ r.valor_mensal|brl }}</b><span class="muted">{{ r.observacao }}</span>
+            <form method="post" action="{% url 'painel:reajuste_excluir' r.pk %}" class="inline" onsubmit="return confirm('Remover reajuste?')">{% csrf_token %}<button class="btn-icon" title="Remover">×</button></form></div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if ct.vinculos_recurso.all %}
+        <div class="small muted" style="margin-top:8px">Recursos: {% for v in ct.vinculos_recurso.all %}{% if not v.data_fim or v.data_fim >= hoje %}<a href="{% url 'painel:recurso' v.recurso_id %}">{{ v.recurso.nome }}</a> {% endif %}{% endfor %}</div>
+        {% endif %}
+        {% if not ct.encerrado %}
+        <div class="row" style="margin-top:10px">
+          <button type="button" class="btn btn-sm" @click="reaj=!reaj; enc=false">Reajuste</button>
+          <a href="{% url 'painel:contrato_editar' ct.pk %}" class="btn btn-sm btn-ghost">Editar</a>
+          <button type="button" class="btn btn-sm btn-ghost" @click="enc=!enc; reaj=false">Encerrar</button>
+          {% if ct.arquivo_contrato %}<a href="{{ ct.arquivo_contrato.url }}" class="btn btn-sm btn-ghost">Arquivo</a>{% endif %}
+        </div>
+        <form method="post" action="{% url 'painel:contrato_reajuste' ct.pk %}" class="row" x-show="reaj" x-cloak style="margin-top:10px">
+          {% csrf_token %}
+          <input type="date" name="vigente_desde" class="input input-sm" required title="A partir do mês">
+          <input type="number" step="0.01" min="0" name="valor_mensal" class="input input-sm" placeholder="Novo valor" required style="width:120px">
+          <input name="observacao" class="input input-sm" placeholder="Observação (opcional)">
+          <button class="btn btn-sm btn-primary">Programar</button>
+        </form>
+        <form method="post" action="{% url 'painel:contrato_encerrar' ct.pk %}" class="row" x-show="enc" x-cloak style="margin-top:10px" onsubmit="return confirm('Encerrar o contrato? Para de cobrar a partir do mês seguinte a esta data.')">
+          {% csrf_token %}
+          <span class="small muted">Último dia</span><input type="date" name="data_fim" class="input input-sm" value="{% now 'Y-m-d' %}" required>
+          <button class="btn btn-sm btn-danger">Encerrar contrato</button>
+        </form>
+        {% endif %}
+      </div>
+      {% empty %}<div class="card-empty">Sem contratos. <a href="{% url 'painel:contrato_novo' %}?cliente={{ c.pk }}">Criar o primeiro</a></div>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Faturas</h2><span class="muted small">{{ total_faturas }}</span></div>
+      {% if faturas %}
+      <div class="table-wrap"><table class="t">
+        <thead><tr><th>Ref.</th><th class="num">Valor</th><th>Venc.</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for f in faturas %}
+        <tr class="{% if f.status == 'cancelado' %}dim{% endif %}">
+          <td><a href="{% url 'painel:fatura' f.pk %}" class="cell-main">{{ f.mes_referencia|stringformat:"02d" }}/{{ f.ano_referencia }}</a>{% if f.tipo == 'avulsa' %} <span class="tag">avulsa</span>{% endif %}{% if f.descricao %}<div class="cell-sub">{{ f.descricao }}</div>{% endif %}</td>
+          <td class="num">{{ f.valor_total|brl }}</td>
+          <td class="mono small">{{ f.vencimento|date:"d/m/y" }}</td>
+          <td><span class="badge {{ f.status }}">{% if f.em_aberto and f.vencimento < hoje %}vencida{% else %}{{ f.get_status_display|lower }}{% endif %}</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<div class="card-empty">Nenhuma fatura.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <div class="card-head"><h2>Recursos</h2><a href="{% url 'painel:recurso_novo' %}" class="small">+ novo</a></div>
+      {% if recursos %}
+      <div class="list">
+        {% for r in recursos %}
+        <div class="item">
+          <div class="body"><div class="t1"><a href="{% url 'painel:recurso' r.pk %}" class="cell-main">{{ r.nome }}</a></div>
+            <div class="t2">{{ r.get_tipo_display }} · {{ r.fornecedor }}{% if r.custo.pago_pelo_cliente %} · cliente paga{% endif %}</div></div>
+          {% if r.custo %}<span class="mono small">{{ r.custo.vencimento|date:"d/m/y" }}</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}<div class="card-empty">Nenhum recurso vinculado.</div>{% endif %}
+    </div>
+
+    {% if snaps %}
+    <div class="card">
+      <div class="card-head"><h2>Margem por mês</h2></div>
+      <table class="t"><tbody>
+        {% for s in snaps %}<tr><td class="small">{{ s.periodo__mes|stringformat:"02d" }}/{{ s.periodo__ano }}</td><td class="num small">{{ s.receita|brl }}</td><td class="num small {% if s.margem < 0 %}d-neg{% endif %}">{{ s.margem|brl }}</td></tr>{% endfor %}
+      </tbody></table>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <div class="card-head"><h2>Últimas mensagens</h2></div>
+      {% if mensagens %}
+      <div class="list">
+        {% for m in mensagens %}
+        <div class="item"><div class="when">{{ m.agendado_para|date:"d/m" }}</div><div class="body"><div class="t1 small">{{ m.get_tipo_display }}</div><div class="t2">fatura {{ m.invoice.mes_referencia|stringformat:"02d" }}/{{ m.invoice.ano_referencia }}</div></div><span class="badge {{ m.status }}">{{ m.get_status_display|lower }}</span></div>
+        {% endfor %}
+      </div>
+      {% else %}<div class="card-empty">Nada enviado ainda.</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

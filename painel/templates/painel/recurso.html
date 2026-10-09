@@ -1,0 +1,68 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}{{ r.nome }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a href="{% url 'painel:recursos' %}" class="small">← recursos</a>
+    <div class="row" style="margin-top:6px"><h1>{{ r.nome }}</h1><span class="badge">{{ r.get_tipo_display }}</span>{% if not r.ativo %}<span class="badge">inativo</span>{% endif %}</div>
+    <div class="sub">{{ r.fornecedor|default:"sem fornecedor" }}{% if r.detalhe %} · {{ r.detalhe }}{% endif %}{% if r.pai %} · pertence a <a href="{% url 'painel:recurso' r.pai_id %}">{{ r.pai.nome }}</a>{% endif %}</div>
+    {% if r.observacoes %}<div class="sub">{{ r.observacoes|linebreaksbr }}</div>{% endif %}
+  </div>
+  <div class="actions"><a href="{% url 'painel:recurso_editar' r.pk %}" class="btn">Editar</a></div>
+</div>
+
+<div class="grid g2">
+  <div class="stack">
+    <div class="card" x-data="{novo: {{ custo_form.errors|yesno:'true,false' }} }">
+      <div class="card-head"><h2>Custos e renovação</h2><button type="button" class="btn btn-sm btn-ghost" @click="novo=!novo">+ custo</button></div>
+      {% if custos %}
+      <div class="table-wrap"><table class="t">
+        <thead><tr><th class="num">Valor</th><th>Renova</th><th>Vigência</th><th></th></tr></thead>
+        <tbody>
+        {% for c in custos %}
+        {% with vigente=c.ativo %}
+        <tr class="{% if not c.ativo or c.data_fim and c.data_fim < hoje %}dim{% endif %}">
+          <td class="num">{{ c.valor_total|brl }}<div class="cell-sub">a cada {{ c.periodo_meses }}m{% if c.pago_pelo_cliente %} · cliente paga{% else %} · {{ c.custo_mensal|brl }}/mês{% endif %}</div></td>
+          <td class="mono small">{{ c.vencimento|date:"d/m/Y" }}</td>
+          <td class="small">{{ c.data_inicio|date:"m/y" }} → {{ c.data_fim|date:"m/y"|default:"hoje" }}</td>
+          <td class="acts">
+            {% if c.ativo and not c.data_fim %}<form method="post" action="{% url 'painel:custo_renovar' c.pk %}" class="inline">{% csrf_token %}<button class="btn btn-sm" title="Avança o vencimento em {{ c.periodo_meses }} mês(es)">Renovei</button></form>{% endif %}
+            <a href="{% url 'painel:custo_editar' c.pk %}" class="btn btn-sm btn-ghost">Editar</a>
+          </td>
+        </tr>
+        {% endwith %}
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<div class="card-empty">Sem custo cadastrado (sem vencimento para avisar).</div>{% endif %}
+      <div class="card-body" x-show="novo" x-cloak style="border-top:1px solid var(--line)">
+        <form method="post" class="form">{% csrf_token %}{% include 'painel/_campos.html' with form=custo_form %}<div><button class="btn btn-primary btn-sm">Adicionar custo</button></div></form>
+      </div>
+    </div>
+    {% if filhos %}
+    <div class="card"><div class="card-head"><h2>Ligados a este</h2></div>
+      <div class="list">{% for f in filhos %}<div class="item"><div class="body"><a href="{% url 'painel:recurso' f.pk %}" class="cell-main">{{ f }}</a></div></div>{% endfor %}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card" x-data="{novo: {{ vinculo_form.errors|yesno:'true,false' }} }">
+    <div class="card-head"><h2>Contratos que usam</h2><button type="button" class="btn btn-sm btn-ghost" @click="novo=!novo">+ vincular</button></div>
+    <div class="small muted" style="padding:10px 16px 0">O custo do mês é dividido igualmente entre os contratos vinculados.{% if r.pai and not vinculos %} Sem vínculo próprio: segue os de {{ r.pai.nome }}.{% endif %}</div>
+    {% if vinculos %}
+    <div class="list">
+      {% for v in vinculos %}
+      <div class="item{% if v.data_fim and v.data_fim < hoje %} muted{% endif %}">
+        <div class="body"><div class="t1"><a href="{% url 'painel:cliente' v.contrato.cliente_id %}" class="cell-main">{{ v.contrato.cliente.nome }}</a></div><div class="t2">{{ v.contrato.nome }} · {{ v.data_inicio|date:"d/m/y" }} → {{ v.data_fim|date:"d/m/y"|default:"hoje" }}</div></div>
+        {% if not v.data_fim %}<form method="post" action="{% url 'painel:vinculo_encerrar' v.pk %}" class="inline" onsubmit="return confirm('Desvincular a partir de hoje?')">{% csrf_token %}<button class="btn btn-sm btn-ghost">Desvincular</button></form>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}<div class="card-empty">Nenhum contrato vinculado.</div>{% endif %}
+    <div class="card-body" x-show="novo" x-cloak style="border-top:1px solid var(--line)">
+      <form method="post" class="form">{% csrf_token %}{% include 'painel/_campos.html' with form=vinculo_form %}<div><button class="btn btn-primary btn-sm">Vincular</button></div></form>
+    </div>
+  </div>
+</div>
+{% endblock %}

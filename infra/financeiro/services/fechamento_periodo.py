@@ -17,11 +17,7 @@ from collections import defaultdict
 from infra.financeiro.models import PeriodoFinanceiro, ContratoSnapshot, DespesaAdicional
 from contratos.models import Contrato
 from invoices.models import InvoiceContrato
-from infra.dominios.models import DomainCost
-from infra.hosting.models import HostingCost
-from infra.vps.models import VPSCost
-from infra.backups.models import VPSBackupCost
-from infra.emails.models import DomainEmailCost
+from infra.recursos.models import CustoRecurso
 from .rateio import calcular_custo_mensal, ratear_por_contratos, validar_periodo, primeiro_e_proximo_mes
 
 
@@ -52,9 +48,7 @@ def fechar_periodo(periodo_id: int, usuario: str) -> dict:
             data_inicio__lt=ultimo_dia
         ).filter(
             models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('cliente').prefetch_related(
-            'dominios', 'hostings', 'vps_list'
-        )
+        ).select_related('cliente')
         
         if not contratos_ativos.exists():
             raise ValidationError(
@@ -62,12 +56,12 @@ def fechar_periodo(periodo_id: int, usuario: str) -> dict:
             )
         
         # 4. Coletar todos os custos ativos no período
-        custos_por_tipo = _coletar_custos_periodo(primeiro_dia, ultimo_dia)
+        custos = _coletar_custos_periodo(primeiro_dia, ultimo_dia)
         
         # 5. Calcular rateio por contrato
         rateios_por_contrato = _calcular_rateios(
             contratos_ativos,
-            custos_por_tipo,
+            custos,
             primeiro_dia,
             ultimo_dia
         )
@@ -98,97 +92,46 @@ def fechar_periodo(periodo_id: int, usuario: str) -> dict:
         }
 
 
-def _coletar_custos_periodo(primeiro_dia: date, ultimo_dia: date) -> dict:
-    """
-    Coleta todos os custos de infraestrutura ativos no período.
-    
-    Returns:
-        dict: {
-            'dominios': QuerySet,
-            'hostings': QuerySet,
-            'vps': QuerySet,
-            'backups': QuerySet,
-            'emails': QuerySet
-        }
-    """
-    filtro_periodo = {
-        'data_inicio__lt': ultimo_dia,
-        'ativo': True,
-        'pago_pelo_cliente': False,  # cliente paga direto: só controle de vencimento
-    }
-    
-    # Custos que não têm data_fim OU têm data_fim >= primeiro_dia
-    
-    return {
-        'dominios': DomainCost.objects.filter(
-            **filtro_periodo
-        ).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('domain'),
-        
-        'hostings': HostingCost.objects.filter(
-            **filtro_periodo
-        ).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('hosting'),
-        
-        'vps': VPSCost.objects.filter(
-            **filtro_periodo
-        ).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('vps'),
-        
-        'backups': VPSBackupCost.objects.filter(
-            **filtro_periodo
-        ).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('backup__vps'),
-        
-        'emails': DomainEmailCost.objects.filter(
-            **filtro_periodo
-        ).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('email__dominio'),
-    }
+CATEGORIA_POR_TIPO = {
+    'dominio': 'dominios',
+    'hosting': 'hostings',
+    'vps': 'vps',
+    'backup': 'backups',
+    'email': 'emails',
+    'outro': 'outros',
+}
 
 
-def _calcular_rateios(contratos, custos_por_tipo, primeiro_dia, ultimo_dia) -> dict:
+def _coletar_custos_periodo(primeiro_dia: date, ultimo_dia: date):
+    """Custos de recursos ativos no período (os pagos pelo cliente ficam fora: só controle de vencimento)."""
+    return CustoRecurso.objects.filter(
+        data_inicio__lt=ultimo_dia,
+        ativo=True,
+        pago_pelo_cliente=False,
+    ).filter(
+        models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
+    ).select_related('recurso', 'recurso__pai')
+
+
+def _calcular_rateios(contratos, custos, primeiro_dia, ultimo_dia) -> dict:
     """
-    Calcula rateio de cada tipo de custo por contrato.
-    
-    Returns:
-        dict: {
-            contrato_id: {
-                'receita': Decimal,
-                'custo_dominios': Decimal,
-                'custo_hostings': Decimal,
-                'custo_vps': Decimal,
-                'custo_backups': Decimal,
-                'custo_emails': Decimal,
-                'detalhamento': dict
-            }
-        }
+    Receita (InvoiceContrato do mês, sem canceladas) e custo de cada contrato.
+    Custo de recurso: dividido igualmente entre os contratos vinculados no período
+    (recurso sem vínculo próprio, como backup, segue os do pai).
     """
     contratos_list = list(contratos)
+    ids_ativos = {c.id for c in contratos_list}
     rateios = defaultdict(lambda: {
         'receita': Decimal('0.00'),
-        'custo_dominios': Decimal('0.00'),
-        'custo_hostings': Decimal('0.00'),
-        'custo_vps': Decimal('0.00'),
-        'custo_backups': Decimal('0.00'),
-        'custo_emails': Decimal('0.00'),
+        **{f'custo_{cat}': Decimal('0.00') for cat in CATEGORIA_POR_TIPO.values()},
         'custo_despesas_adicionais': Decimal('0.00'),
         'detalhamento': {
-            'dominios': [],
-            'hostings': [],
-            'vps': [],
-            'backups': [],
-            'emails': [],
+            **{cat: [] for cat in CATEGORIA_POR_TIPO.values()},
             'despesas_adicionais': [],
-            'invoices': []
+            'invoices': [],
         }
     })
-    
+
     # Receita por contrato via vínculo explícito (InvoiceContrato)
     mes_ref = primeiro_dia.month
     ano_ref = primeiro_dia.year
@@ -227,108 +170,25 @@ def _calcular_rateios(contratos, custos_por_tipo, primeiro_dia, ultimo_dia) -> d
                 'observacao': 'Sem invoice no período - receita zerada'
             })
     
-    # Ratear domínios
-    for cost in custos_por_tipo['dominios']:
-        contratos_domain = [c for c in contratos_list if cost.domain in c.dominios.all()]
-        if contratos_domain:
-            custo_mensal = calcular_custo_mensal(cost)
-            custo_rateado = ratear_por_contratos(custo_mensal, contratos_domain)
-            
-            for contrato in contratos_domain:
-                rateios[contrato.id]['custo_dominios'] += custo_rateado
-                rateios[contrato.id]['detalhamento']['dominios'].append({
-                    'nome': cost.domain.nome,
-                    'custo': float(custo_rateado),
-                    'custo_total': float(custo_mensal),
-                    'rateio': len(contratos_domain)
-                })
-    
-    # Ratear hostings
-    for cost in custos_por_tipo['hostings']:
-        contratos_hosting = [c for c in contratos_list if cost.hosting in c.hostings.all()]
-        if contratos_hosting:
-            custo_mensal = calcular_custo_mensal(cost)
-            custo_rateado = ratear_por_contratos(custo_mensal, contratos_hosting)
-            
-            for contrato in contratos_hosting:
-                rateios[contrato.id]['custo_hostings'] += custo_rateado
-                rateios[contrato.id]['detalhamento']['hostings'].append({
-                    'nome': cost.hosting.nome,
-                    'custo': float(custo_rateado),
-                    'custo_total': float(custo_mensal),
-                    'rateio': len(contratos_hosting)
-                })
-    
-    # Ratear VPS
-    for cost in custos_por_tipo['vps']:
-        # VPS usa relacionamento M2M customizado com período
-        from infra.vps.models import VPSContrato
-        
-        vinculos_ativos = VPSContrato.objects.filter(
-            vps=cost.vps,
-            data_inicio__lt=ultimo_dia
-        ).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('contrato')
-        
-        contratos_vps = [v.contrato for v in vinculos_ativos if v.contrato in contratos_list]
-        
-        if contratos_vps:
-            custo_mensal = calcular_custo_mensal(cost)
-            custo_rateado = ratear_por_contratos(custo_mensal, contratos_vps)
-            
-            for contrato in contratos_vps:
-                rateios[contrato.id]['custo_vps'] += custo_rateado
-                rateios[contrato.id]['detalhamento']['vps'].append({
-                    'nome': cost.vps.nome,
-                    'custo': float(custo_rateado),
-                    'custo_total': float(custo_mensal),
-                    'rateio': len(contratos_vps)
-                })
-    
-    # Ratear Backups (seguem a VPS)
-    for cost in custos_por_tipo['backups']:
-        from infra.vps.models import VPSContrato
-        
-        vinculos_ativos = VPSContrato.objects.filter(
-            vps=cost.backup.vps,
-            data_inicio__lt=ultimo_dia
-        ).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=primeiro_dia)
-        ).select_related('contrato')
-        
-        contratos_backup = [v.contrato for v in vinculos_ativos if v.contrato in contratos_list]
-        
-        if contratos_backup:
-            custo_mensal = calcular_custo_mensal(cost)
-            custo_rateado = ratear_por_contratos(custo_mensal, contratos_backup)
-            
-            for contrato in contratos_backup:
-                rateios[contrato.id]['custo_backups'] += custo_rateado
-                rateios[contrato.id]['detalhamento']['backups'].append({
-                    'nome': cost.backup.nome,
-                    'vps': cost.backup.vps.nome,
-                    'custo': float(custo_rateado),
-                    'custo_total': float(custo_mensal),
-                    'rateio': len(contratos_backup)
-                })
-    
-    # Emails (SEM rateio - custo direto do contrato)
-    for cost in custos_por_tipo['emails']:
-        # Email pertence diretamente a um contrato específico
-        if cost.email.contrato in contratos_list:
-            contrato = cost.email.contrato
-            custo_mensal = calcular_custo_mensal(cost)
-            
-            rateios[contrato.id]['custo_emails'] += custo_mensal
-            rateios[contrato.id]['detalhamento']['emails'].append({
-                'dominio': cost.email.dominio.nome,
-                'fornecedor': cost.email.fornecedor,
-                'custo': float(custo_mensal),
+    for cost in custos:
+        contrato_ids = sorted({
+            v.contrato_id for v in cost.recurso.vinculos_em(primeiro_dia, ultimo_dia)
+        } & ids_ativos)
+        if not contrato_ids:
+            continue
+        categoria = CATEGORIA_POR_TIPO[cost.recurso.tipo]
+        custo_mensal = calcular_custo_mensal(cost)
+        custo_rateado = ratear_por_contratos(custo_mensal, contrato_ids)
+        for contrato_id in contrato_ids:
+            rateios[contrato_id][f'custo_{categoria}'] += custo_rateado
+            rateios[contrato_id]['detalhamento'][categoria].append({
+                'nome': cost.recurso.nome,
+                'fornecedor': cost.recurso.fornecedor,
+                'custo': float(custo_rateado),
                 'custo_total': float(custo_mensal),
-                'rateio': 1  # Sem rateio
+                'rateio': len(contrato_ids),
             })
-    
+
     # Despesas Adicionais (diretas por contrato)
     mes_ref = primeiro_dia.month
     ano_ref = primeiro_dia.year
@@ -365,6 +225,7 @@ def _criar_snapshot(contrato, periodo, rateio_dados) -> ContratoSnapshot:
         rateio_dados['custo_vps'] +
         rateio_dados['custo_backups'] +
         rateio_dados['custo_emails'] +
+        rateio_dados['custo_outros'] +
         rateio_dados['custo_despesas_adicionais']
     )
     
@@ -395,6 +256,7 @@ def _criar_snapshot(contrato, periodo, rateio_dados) -> ContratoSnapshot:
         custo_vps=rateio_dados['custo_vps'],
         custo_backups=rateio_dados['custo_backups'],
         custo_emails=rateio_dados['custo_emails'],
+        custo_outros=rateio_dados['custo_outros'],
         custo_despesas_adicionais=rateio_dados['custo_despesas_adicionais'],
         custo_total=custo_total,
         margem=margem,

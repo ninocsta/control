@@ -1,0 +1,22 @@
+{% extends 'painel/base.html' %}
+{% block title %}{{ titulo }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a href="{{ voltar }}" class="small">← voltar</a>
+    <h1 style="margin-top:6px">{{ titulo }}</h1>
+    {% if subtitulo %}<div class="sub">{{ subtitulo }}</div>{% endif %}
+  </div>
+</div>
+<div class="card"><div class="card-body">
+  <form method="post" class="form"{% if multipart %} enctype="multipart/form-data"{% endif %}>
+    {% csrf_token %}
+    {% include 'painel/_campos.html' with form=form %}
+    {% if form2 %}
+      <div class="label" style="margin-top:6px">{{ form2_titulo }}</div>
+      {% include 'painel/_campos.html' with form=form2 %}
+    {% endif %}
+    <div class="row"><button class="btn btn-primary">Salvar</button><a href="{{ voltar }}" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div></div>
+{% endblock %}

@@ -4,7 +4,7 @@ from django.forms import BaseInlineFormSet
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
 from .models import Invoice, InvoiceContrato, MessageQueue
-from .services.invoice_service import recalcular_total, registrar_pagamento
+from .services.invoice_service import cancelar_fatura, recalcular_total, registrar_pagamento
 from .services.message_queue_service import remover_mensagens_cobranca_pendentes
 
 
@@ -114,11 +114,8 @@ class InvoiceAdmin(admin.ModelAdmin):
     @admin.action(description='Cancelar (o link /p/ passa a mostrar "cancelada")')
     def cancelar(self, request, queryset):
         total = 0
-        for invoice in queryset.exclude(status__in=['pago', 'cancelado']):
-            invoice.status = 'cancelado'
-            invoice.save(update_fields=['status'])
-            remover_mensagens_cobranca_pendentes(invoice)
-            total += 1
+        for invoice in queryset:
+            total += cancelar_fatura(invoice)
         self.message_user(request, f'{total} fatura(s) cancelada(s).')
 
     def status_badge(self, obj):

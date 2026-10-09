@@ -1,0 +1,5 @@
+<div id="toasts"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% for m in messages %}
+  <div class="toast {{ m.tags }}" x-data="{v: true}" x-show="v" x-init="setTimeout(() => v = false, 6000)" @click="v = false">{{ m }}</div>
+  {% endfor %}
+</div>

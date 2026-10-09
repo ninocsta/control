@@ -1,0 +1,24 @@
+{% load static %}<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · Control</title>
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem("theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); } catch (e) {}</script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="{% static 'painel/app.css' %}">
+</head>
+<body>
+<div class="login">
+  <form method="post" class="card stack">
+    {% csrf_token %}
+    <div class="row"><span class="brand"><i>C</i>Control</span></div>
+    {% if form.errors %}<div class="form-errors">Usuário ou senha inválidos.</div>{% endif %}
+    <div class="field"><label for="id_username">Usuário</label><input class="input" name="username" id="id_username" autofocus autocomplete="username" required></div>
+    <div class="field"><label for="id_password">Senha</label><input class="input" type="password" name="password" id="id_password" autocomplete="current-password" required></div>
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="btn btn-primary">Entrar</button>
+  </form>
+</div>
+</body>
+</html>

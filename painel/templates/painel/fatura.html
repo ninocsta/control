@@ -1,0 +1,85 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}Fatura {{ f.pk }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a href="{% url 'painel:cobrancas' %}?mes={{ f.ano_referencia }}-{{ f.mes_referencia|stringformat:'02d' }}" class="small">← cobranças</a>
+    <div class="row" style="margin-top:6px">
+      <h1>{{ f.cliente.nome }} · {{ f.valor_total|brl }}</h1>
+      <span class="badge {{ f.status }}">{{ f.get_status_display|lower }}</span>
+      {% if f.tipo == 'avulsa' %}<span class="tag">avulsa</span>{% endif %}
+    </div>
+    <div class="sub">Ref. {{ f.mes_referencia|stringformat:"02d" }}/{{ f.ano_referencia }} · vence {{ f.vencimento|date:"d/m/Y" }}{% if f.pago_em %} · pago {{ f.pago_em|date:"d/m/Y" }}{% endif %} · nº {{ f.pk }}</div>
+  </div>
+  <div class="actions">
+    <a href="{% url 'painel:cliente' f.cliente_id %}" class="btn">Ver cliente</a>
+  </div>
+</div>
+
+<div class="grid g2">
+  <div class="stack">
+    {% if f.em_aberto %}
+    <div class="card">
+      <div class="card-head"><h2>Ações</h2></div>
+      <div class="card-body stack" style="gap:12px">
+        <form method="post" action="{% url 'painel:fatura_acao' f.pk 'pagar' %}" class="row">
+          {% csrf_token %}
+          <input type="date" name="pago_em" class="input input-sm" value="{% now 'Y-m-d' %}">
+          <button class="btn btn-sm btn-ok">Recebi (registrar pagamento)</button>
+        </form>
+        <div class="row">
+          <form method="post" action="{% url 'painel:fatura_acao' f.pk 'lembrar' %}" class="inline" onsubmit="return confirm('Mandar lembrete agora no WhatsApp?')">{% csrf_token %}<button class="btn btn-sm">Lembrar no WhatsApp</button></form>
+          <form method="post" action="{% url 'painel:fatura_acao' f.pk 'link' %}" class="inline">{% csrf_token %}<button class="btn btn-sm">Refazer link</button></form>
+          <form method="post" action="{% url 'painel:fatura_acao' f.pk 'cancelar' %}" class="inline" onsubmit="return confirm('Cancelar esta fatura?')">{% csrf_token %}<button class="btn btn-sm btn-danger">Cancelar</button></form>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Editar</h2></div>
+      <div class="card-body">
+        <form method="post" class="form">{% csrf_token %}
+          {% include 'painel/_campos.html' %}
+          <div class="small muted">Mudar o vencimento reinicia os lembretes.</div>
+          <div><button class="btn btn-primary btn-sm">Salvar</button></div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <div class="card-head"><h2>Pagamento</h2></div>
+      <div class="card-body stack" style="gap:8px">
+        <div class="row"><span class="muted small" style="width:110px">Link do cliente</span>{% if link %}<a href="{{ link }}" target="_blank" class="mono small">{{ link }}</a>{% else %}<span class="d-warn small">sem link</span>{% endif %}</div>
+        {% if f.checkout_url %}<div class="row"><span class="muted small" style="width:110px">InfinitePay</span><a href="{{ f.checkout_url }}" target="_blank" class="small">abrir checkout</a></div>{% endif %}
+        {% if f.receipt_url %}<div class="row"><span class="muted small" style="width:110px">Recibo</span><a href="{{ f.receipt_url }}" target="_blank" class="small">abrir recibo</a></div>{% endif %}
+        {% if f.capture_method %}<div class="row"><span class="muted small" style="width:110px">Forma</span><span class="small">{{ f.capture_method }}</span></div>{% endif %}
+        {% if f.transaction_nsu %}<div class="row"><span class="muted small" style="width:110px">NSU</span><span class="mono small">{{ f.transaction_nsu }}</span></div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <div class="card-head"><h2>Contratos cobrados</h2></div>
+      <table class="t"><tbody>
+        {% for i in itens %}<tr><td>{{ i.contrato.nome }}</td><td class="num">{{ i.valor|brl }}</td></tr>{% endfor %}
+      </tbody></table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Mensagens</h2></div>
+      {% if mensagens %}
+      <div class="list">
+        {% for m in mensagens %}
+        <div class="item" x-data="{open:false}">
+          <div class="when">{{ m.agendado_para|date:"d/m H:i" }}</div>
+          <div class="body"><div class="t1">{{ m.get_tipo_display }}</div><div class="t2">{% if m.enviado_em %}enviada {{ m.enviado_em|date:"d/m H:i" }}{% elif m.tentativas %}{{ m.tentativas }} tentativa(s){% endif %}</div></div>
+          <span class="badge {{ m.status }}">{{ m.get_status_display|lower }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}<div class="card-empty">Nenhuma mensagem ainda.</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

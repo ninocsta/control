@@ -185,3 +185,52 @@ def registrar_pagamento(invoice, pago_em=None, transaction_nsu='', receipt_url='
     remover_mensagens_cobranca_pendentes(invoice)
     mensagem, _ = criar_mensagem_confirmacao(invoice)
     return mensagem
+
+
+def cancelar_fatura(invoice):
+    """Cancela e limpa cobranças pendentes; o link /p/ passa a mostrar "cancelada"."""
+    from .message_queue_service import remover_mensagens_cobranca_pendentes
+    if invoice.status in ('pago', 'cancelado'):
+        return False
+    invoice.status = 'cancelado'
+    invoice.save(update_fields=['status'])
+    remover_mensagens_cobranca_pendentes(invoice)
+    return True
+
+
+def criar_avulsa(contrato, descricao, valor, vencimento):
+    """Cobrança extra (horas, implantação...) ligada a um contrato; não bloqueia a mensalidade."""
+    with transaction.atomic():
+        invoice = Invoice.objects.create(
+            cliente=contrato.cliente, tipo='avulsa', descricao=descricao, valor_total=valor,
+            mes_referencia=vencimento.month, ano_referencia=vencimento.year, vencimento=vencimento,
+        )
+        invoice.order_nsu = str(invoice.id)
+        invoice.save(update_fields=['order_nsu'])
+        InvoiceContrato.objects.create(invoice=invoice, contrato=contrato, valor=valor)
+    InfinitePayService().try_create_checkout(invoice)
+    return invoice
+
+
+def alterar_vencimento(invoice, vencimento):
+    """Novo vencimento: volta a pendente se ainda não venceu e reinicia os lembretes."""
+    from .message_queue_service import remover_mensagens_cobranca_pendentes
+    invoice.vencimento = vencimento
+    campos = ['vencimento']
+    if invoice.status == 'atrasado' and vencimento >= timezone.localdate():
+        invoice.status = 'pendente'
+        campos.append('status')
+    invoice.save(update_fields=campos)
+    remover_mensagens_cobranca_pendentes(invoice)
+
+
+def enviar_cobranca_agora(invoice):
+    """Manda o lembrete no WhatsApp na hora (texto conforme a data: vence em / hoje / venceu)."""
+    from .message_queue_service import montar_mensagem_cobranca
+    from .waha_service import WahaService
+    if not invoice.cliente.telefone:
+        raise ValueError('Cliente sem telefone')
+    if not invoice.checkout_url:
+        InfinitePayService().try_create_checkout(invoice)
+    texto = montar_mensagem_cobranca(invoice, 'no_dia', data_referencia=timezone.localdate())
+    WahaService().send_message(invoice.cliente.telefone, texto)

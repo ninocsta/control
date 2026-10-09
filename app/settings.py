@@ -42,7 +42,9 @@ INSTALLED_APPS = [
     'infra.hosting',
     'infra.backups',
     'infra.emails',
-    'infra.financeiro'
+    'infra.financeiro',
+    'infra.recursos',
+    'painel',
 ]
 
 MIDDLEWARE = [
@@ -68,6 +70,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'painel.context.nav',
             ],
         },
     },
@@ -161,17 +164,6 @@ JAZZMIN_SETTINGS = {
     "show_sidebar": True,
 
     # 🔗 Links customizados no menu
-    "custom_links": {
-        "financeiro": [
-            {
-                "name": "📊 Dashboard Financeiro",
-                "url": "/financeiro/dashboard/",
-                "icon": "fas fa-chart-line",
-                "permissions": ["auth.view_user"],
-            },
-        ]
-    },
-    
     # 📋 Ordem e ícones dos apps no menu
     "icons": {
         "auth": "fas fa-users-cog",
@@ -180,11 +172,8 @@ JAZZMIN_SETTINGS = {
         "clientes.cliente": "fas fa-user-tie",
         "contratos.contrato": "fas fa-file-contract",
         "invoices.invoice": "fas fa-file-invoice-dollar",
-        "dominios.dominio": "fas fa-globe",
-        "dominios.domaincost": "fas fa-dollar-sign",
-        "vps.vps": "fas fa-server",
-        "hosting.hosting": "fas fa-cloud",
-        "emails.domainemail": "fas fa-envelope",
+        "recursos.recurso": "fas fa-server",
+        "recursos.custorecurso": "fas fa-dollar-sign",
         "financeiro.periodofinanceiro": "fas fa-calendar-alt",
         "financeiro.contratosnapshot": "fas fa-camera",
     },
@@ -192,7 +181,7 @@ JAZZMIN_SETTINGS = {
     # 🏠 Botão de dashboard na topbar
     "topmenu_links": [
         {"name": "Início", "url": "admin:index", "permissions": ["auth.view_user"]},
-        {"name": "📊 Dashboard", "url": "/financeiro/dashboard/", "permissions": ["auth.view_user"]},
+        {"name": "📊 Painel", "url": "/", "permissions": ["auth.view_user"]},
         {"name": "💇 Dashboard Salão", "url": "/salao/dashboard/", "permissions": ["auth.view_user"]},
     ],
 

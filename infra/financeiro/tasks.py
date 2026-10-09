@@ -9,7 +9,6 @@ Tasks:
 from datetime import date, timedelta
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.db import models
 
 from app.notify import notify
 import logging
@@ -17,11 +16,7 @@ import logging
 from contratos.models import Contrato, ContratoReajuste
 from infra.financeiro.models import PeriodoFinanceiro
 from infra.financeiro.services import fechar_periodo
-from infra.dominios.models import DomainCost
-from infra.vps.models import VPSCost
-from infra.emails.models import DomainEmailCost
-from infra.hosting.models import HostingCost
-from infra.backups.models import VPSBackupCost
+from infra.recursos.services import custos_monitorados
 
 logger = logging.getLogger(__name__)
 
@@ -99,19 +94,6 @@ DIAS_AVISO = (30, 15, 7, 3, 1, 0)
 INTERVALO_AVISO_VENCIDO = 3  # vencido e não renovado: repete a cada N dias
 
 
-def _custos_monitorados():
-    """(rótulo, queryset, nome) de cada tipo de custo de infra."""
-    return [
-        ('Domínio', DomainCost.objects.select_related('domain'), lambda c: c.domain.nome),
-        ('VPS', VPSCost.objects.select_related('vps'), lambda c: c.vps.nome),
-        ('Hosting', HostingCost.objects.select_related('hosting'), lambda c: c.hosting.nome),
-        ('E-mail', DomainEmailCost.objects.select_related('email__dominio', 'email__contrato__cliente'),
-         lambda c: f"{c.email.dominio.nome} ({c.email.contrato.cliente.nome})"),
-        ('Backup', VPSBackupCost.objects.select_related('backup__vps'),
-         lambda c: f"{c.backup.nome} ({c.backup.vps.nome})"),
-    ]
-
-
 def _deve_avisar(dias):
     return dias in DIAS_AVISO or (dias < 0 and -dias % INTERVALO_AVISO_VENCIDO == 0)
 
@@ -136,16 +118,12 @@ def task_alertar_vencimentos():
     hoje = timezone.localdate()
     alertas = []
 
-    for tipo, qs, nome in _custos_monitorados():
-        custos = qs.filter(ativo=True).filter(
-            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=hoje)
-        ).filter(vencimento__lte=hoje + timedelta(days=max(DIAS_AVISO)))
-        for cost in custos:
-            dias = (cost.vencimento - hoje).days
-            if not _deve_avisar(dias):
-                continue
-            quem = ' · cliente paga' if cost.pago_pelo_cliente else f' · R$ {cost.valor_total:.2f}'
-            alertas.append((dias, f"{tipo} {nome}: {cost.vencimento:%d/%m} ({_quando(dias)}){quem}"))
+    for cost in custos_monitorados(ate=hoje + timedelta(days=max(DIAS_AVISO))):
+        dias = (cost.vencimento - hoje).days
+        if not _deve_avisar(dias):
+            continue
+        quem = ' · cliente paga' if cost.pago_pelo_cliente else f' · R$ {cost.valor_total:.2f}'
+        alertas.append((dias, f"{cost.recurso}: {cost.vencimento:%d/%m} ({_quando(dias)}){quem}"))
 
     for contrato in Contrato.objects.filter(
         data_fim__gte=hoje, data_fim__lte=hoje + timedelta(days=30)

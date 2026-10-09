@@ -1,0 +1,37 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}Financeiro{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Financeiro</h1>
+    <div class="sub">Fechamento mensal: receita faturada × custo dividido por contrato. Fecha sozinho dia 1 às 02:00; fechado não muda.</div>
+  </div>
+  <div class="actions"><a href="{% url 'painel:periodo' atual.ano atual.mes %}" class="btn">Mês atual (prévia)</a></div>
+</div>
+
+{% if anterior %}
+<div class="card" style="margin-bottom:16px;border-color:var(--warn)">
+  <div class="card-body row"><div class="grow"><b>{{ anterior.1|stringformat:"02d" }}/{{ anterior.0 }} ainda está aberto.</b> <span class="muted small">Lance despesas extras antes de fechar.</span></div>
+    <a href="{% url 'painel:periodo' anterior.0 anterior.1 %}" class="btn btn-sm">Revisar e fechar</a></div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="table-wrap"><table class="t">
+    <thead><tr><th>Mês</th><th class="num">Receita</th><th class="num">Custo</th><th class="num">Margem</th><th class="num hide-sm">%</th><th></th></tr></thead>
+    <tbody>
+    {% for l in periodos %}
+    <tr>
+      <td><a href="{% url 'painel:periodo' l.p.ano l.p.mes %}" class="cell-main">{{ l.p.mes|stringformat:"02d" }}/{{ l.p.ano }}</a></td>
+      <td class="num">{{ l.receita|brl }}</td><td class="num">{{ l.custo|brl }}</td>
+      <td class="num {% if l.margem < 0 %}d-neg{% endif %}">{{ l.margem|brl }}</td>
+      <td class="num hide-sm small">{% if l.receita %}{% widthratio l.margem l.receita 100 %}%{% endif %}</td>
+      <td>{% if l.p.fechado %}<span class="badge ok">fechado</span>{% else %}<span class="badge warn">aberto</span>{% endif %}</td>
+    </tr>
+    {% empty %}<tr><td colspan="6" class="card-empty">Nenhum período.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

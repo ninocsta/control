@@ -1,0 +1,40 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}Recursos{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Recursos</h1>
+    <div class="sub">Domínios, VPS, hosting, e-mails... Custo mensal que você paga: {{ total_mensal|brl }}</div>
+  </div>
+  <div class="actions">
+    <a href="{% url 'painel:recurso_novo' %}" class="btn btn-primary">+ Recurso</a>
+  </div>
+</div>
+<div class="row" style="margin-bottom:12px">
+  <a href="?{% if todos %}todos=1{% endif %}" class="btn btn-sm {% if not tipo %}btn-primary{% else %}btn-ghost{% endif %}">Todos</a>
+  {% for v, l in tipos %}<a href="?tipo={{ v }}{% if todos %}&todos=1{% endif %}" class="btn btn-sm {% if tipo == v %}btn-primary{% else %}btn-ghost{% endif %}">{{ l }}</a>{% endfor %}
+  <span class="grow"></span>
+  {% if todos %}<a href="?tipo={{ tipo }}" class="small">só ativos</a>{% else %}<a href="?tipo={{ tipo }}&todos=1" class="small">incluir inativos</a>{% endif %}
+</div>
+<div class="card">
+  <div class="table-wrap"><table class="t">
+    <thead><tr><th>Recurso</th><th class="hide-sm">Clientes</th><th class="num">Custo/mês</th><th>Renova</th><th></th></tr></thead>
+    <tbody>
+    {% for l in linhas %}
+    <tr class="{% if not l.r.ativo %}dim{% endif %}">
+      <td><a href="{% url 'painel:recurso' l.r.pk %}" class="cell-main">{{ l.r.nome }}</a>
+        <div class="cell-sub">{{ l.r.get_tipo_display }} · {{ l.r.fornecedor|default:"—" }}{% if l.r.detalhe %} · {{ l.r.detalhe }}{% endif %}{% if l.r.pai %} · de {{ l.r.pai.nome }}{% endif %}</div></td>
+      <td class="hide-sm small">{{ l.clientes|join:", "|default:"—" }}</td>
+      <td class="num">{% if not l.custo %}<span class="muted">—</span>{% elif l.custo.pago_pelo_cliente %}<span class="badge">cliente paga</span>{% else %}{{ l.custo.custo_mensal|brl }}{% endif %}</td>
+      <td class="mono small">{% if l.custo %}{{ l.custo.vencimento|date:"d/m/y" }}<div class="{% if l.dias < 0 %}d-neg{% elif l.dias <= 30 %}d-warn{% else %}muted{% endif %}" style="font-size:11px">{{ l.dias|quando }}</div>{% endif %}</td>
+      <td class="acts">{% if l.custo and l.dias <= 30 %}
+        <form method="post" action="{% url 'painel:custo_renovar' l.custo.pk %}" class="inline">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="btn btn-sm" title="Já paguei: avança {{ l.custo.periodo_meses }} mês(es)">Renovei</button></form>
+      {% endif %}</td>
+    </tr>
+    {% empty %}<tr><td colspan="5" class="card-empty">Nenhum recurso.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

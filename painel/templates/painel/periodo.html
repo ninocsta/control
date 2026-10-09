@@ -1,0 +1,49 @@
+{% extends 'painel/base.html' %}
+{% load painel %}
+{% block title %}{{ rotulo }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <a href="{% url 'painel:financeiro' %}" class="small">← financeiro</a>
+    <div class="row" style="margin-top:6px"><h1>{{ rotulo|capfirst }}</h1>{% if p.fechado %}<span class="badge ok">fechado {{ p.fechado_em|date:"d/m" }}</span>{% else %}<span class="badge warn">aberto</span>{% endif %}</div>
+    <div class="sub">{% if p.fechado %}Números congelados no fechamento.{% else %}Prévia com os dados de hoje: faturado {{ resumo.faturado|brl }}, custo {{ resumo.custo|brl }}.{% endif %}</div>
+  </div>
+  {% if pode_fechar %}
+  <div class="actions">
+    <form method="post" action="{% url 'painel:periodo_fechar' ano mes %}" onsubmit="return confirm('Fechar {{ rotulo }}? Depois não dá para mudar os números do mês.')">{% csrf_token %}<button class="btn btn-primary">Fechar mês</button></form>
+  </div>
+  {% endif %}
+</div>
+
+{% if snaps %}
+<div class="card" style="margin-bottom:16px">
+  <div class="card-head"><h2>Por contrato</h2></div>
+  <div class="table-wrap"><table class="t">
+    <thead><tr><th>Contrato</th><th class="num">Receita</th><th class="num hide-sm">Custo</th><th class="num hide-sm">dos quais extras</th><th class="num">Margem</th></tr></thead>
+    <tbody>
+    {% for s in snaps %}
+    <tr><td><a href="{% url 'painel:cliente' s.contrato.cliente_id %}" class="cell-main">{{ s.contrato.cliente.nome }}</a><div class="cell-sub">{{ s.contrato.nome }}</div></td>
+      <td class="num">{{ s.receita|brl }}</td>
+      <td class="num hide-sm">{{ s.custo_total|brl }}</td>
+      <td class="num hide-sm">{{ s.custo_despesas_adicionais|brl }}</td>
+      <td class="num {% if s.margem < 0 %}d-neg{% endif %}">{{ s.margem|brl }}{% if s.margem_percentual is not None %}<div class="cell-sub">{{ s.margem_percentual }}%</div>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head"><h2>Despesas extras do mês</h2></div>
+  {% if despesas %}
+  <table class="t"><tbody>
+    {% for d in despesas %}<tr><td>{{ d.descricao }}<div class="cell-sub">{{ d.contrato.cliente.nome }} · {{ d.contrato.nome }}</div></td><td class="num">{{ d.valor|brl }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% else %}<div class="card-empty">Nenhuma despesa extra (licença, suporte terceirizado, compra repassada...).</div>{% endif %}
+  {% if not p.fechado %}
+  <div class="card-body" style="border-top:1px solid var(--line)">
+    <form method="post" class="form">{% csrf_token %}{% include 'painel/_campos.html' %}<div><button class="btn btn-primary btn-sm">Lançar despesa</button></div></form>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
