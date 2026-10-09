@@ -2,7 +2,6 @@
 Jobs do módulo de invoices. Rodam por `manage.py run_job` (Scheduled Task do Coolify)
 ou direto de uma view (confirmação de pagamento).
 """
-from datetime import date
 from django.utils import timezone
 from django.db import models
 import logging
@@ -15,6 +14,8 @@ from invoices.services.message_queue_service import (
     agendar_mensagens_cobranca,
     agendar_mensagens_atraso,
     montar_mensagem_cobranca,
+    montar_mensagem_atraso,
+    TIPOS_COBRANCA,
     remover_mensagens_cobranca_pendentes,
     registrar_falha_envio,
     marcar_mensagem_enviada,
@@ -28,12 +29,12 @@ def task_gerar_invoices_mes_atual():
     Gera invoices de cobrança para todos os clientes com contratos ativos.
     
     Regras:
-    - 1 invoice por cliente por mês
+    - 1 mensalidade por contrato por mês (agrupada por cliente)
     - Valor = soma dos contratos ativos no mês
     - Vencimento = cliente.vencimento_padrao (1-28)
     - Idempotente: não gera duplicatas
     
-    Executar: Todo dia 1 do mês às 00:10.
+    Executar: Diariamente (idempotente por contrato; pega contrato cadastrado depois do dia 1).
     """
     resultado = gerar_invoices_mensais()
 
@@ -58,13 +59,13 @@ def task_marcar_invoices_atrasados():
     
     Executar: Diariamente às 09:00.
     """
-    hoje = date.today()
+    hoje = timezone.localdate()
     
     # Buscar invoices pendentes e vencidos
     invoices_vencidos = Invoice.objects.filter(
         status='pendente',
         vencimento__lt=hoje
-    )
+    ).select_related('cliente')
     
     total_atualizados = 0
     detalhes = []
@@ -98,7 +99,8 @@ def task_marcar_invoices_atrasados():
     
     if total_atualizados > 0:
         logger.warning(f"{total_atualizados} invoices marcados como atrasados")
-        # TODO: Enviar notificação/email para cobrança
+        itens = "\n".join(f"- {d['cliente']} {d['periodo']}: R$ {d['valor']:.2f}" for d in detalhes)
+        notify(f"🔴 {total_atualizados} fatura(s) venceram sem pagamento:\n{itens}")
     else:
         logger.info("Nenhum invoice atrasado encontrado")
     
@@ -172,44 +174,56 @@ def task_enviar_confirmacao_imediata(messagequeue_id):
         registrar_falha_envio(mensagem)
 
 
-def task_processar_fila_waha(limite=1):
-    """
-    Processa a fila de mensagens pendentes e envia via WAHA.
+def _texto_atual(mensagem, hoje):
+    """Texto montado na hora do envio (valor, link e data sempre atuais)."""
+    if mensagem.tipo == 'atraso':
+        return montar_mensagem_atraso(mensagem.invoice)
+    return montar_mensagem_cobranca(mensagem.invoice, mensagem.tipo, data_referencia=hoje)
 
-    Executar: A cada hora.
+
+def task_processar_fila_waha(limite=10):
+    """
+    Processa a fila de mensagens pendentes e envia via WAHA. Confirmações primeiro.
+
+    Executar: Algumas vezes por dia (dias úteis).
     """
     agora = timezone.now()
-    tipos_cobranca = ['5_dias', '2_dias', 'no_dia', 'atraso']
+    hoje = timezone.localdate()
     mensagens = MessageQueue.objects.filter(
         status='pendente',
         agendado_para__lte=agora
     ).filter(
         models.Q(tipo='confirmacao') |
         (
-            models.Q(tipo__in=tipos_cobranca) &
+            models.Q(tipo__in=TIPOS_COBRANCA) &
             models.Q(invoice__checkout_url__isnull=False) &
             ~models.Q(invoice__checkout_url='')
         )
-    ).select_related('invoice', 'invoice__cliente').order_by('agendado_para')[:limite]
+    ).select_related('invoice', 'invoice__cliente').order_by(
+        models.Case(models.When(tipo='confirmacao', then=0), default=1),
+        'agendado_para',
+    )[:limite]
 
     service = WahaService()
     enviados = 0
     falhas = 0
+    descartadas = 0
 
     for mensagem in mensagens:
         try:
-            if mensagem.tipo in tipos_cobranca and mensagem.invoice.status in ['pago', 'cancelado']:
-                remover_mensagens_cobranca_pendentes(mensagem.invoice)
-                continue
-
-            if mensagem.tipo == 'no_dia':
-                mensagem_dinamica = montar_mensagem_cobranca(
-                    mensagem.invoice,
-                    mensagem.tipo,
-                    data_referencia=timezone.localdate(),
-                )
-                if mensagem.mensagem != mensagem_dinamica:
-                    mensagem.mensagem = mensagem_dinamica
+            if mensagem.tipo in TIPOS_COBRANCA:
+                if not mensagem.invoice.em_aberto:
+                    remover_mensagens_cobranca_pendentes(mensagem.invoice)
+                    descartadas += 1
+                    continue
+                if mensagem.tipo in ('5_dias', '2_dias') and mensagem.invoice.vencimento < hoje:
+                    # Lembrete "vai vencer" que perdeu a hora: o de atraso cobre.
+                    mensagem.delete()
+                    descartadas += 1
+                    continue
+                texto = _texto_atual(mensagem, hoje)
+                if mensagem.mensagem != texto:
+                    mensagem.mensagem = texto
                     mensagem.save(update_fields=['mensagem'])
 
             if not mensagem.telefone:
@@ -236,6 +250,7 @@ def task_processar_fila_waha(limite=1):
     return {
         'processadas': len(mensagens),
         'enviadas': enviados,
+        'descartadas': descartadas,
         'falhas': falhas,
     }
 
@@ -269,7 +284,7 @@ def task_processar_checkouts_infinitepay(limite=100):
     Executar: Periodicamente.
     """
     invoices = Invoice.objects.filter(
-        status='pendente',
+        status__in=['pendente', 'atrasado'],
     ).filter(
         models.Q(checkout_url='') | models.Q(checkout_url__isnull=True) |
         models.Q(invoice_slug='') | models.Q(invoice_slug__isnull=True)

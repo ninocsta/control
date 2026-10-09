@@ -23,6 +23,11 @@ class Invoice(models.Model):
         ('atrasado', 'Atrasado'),
         ('cancelado', 'Cancelado'),
     ]
+
+    TIPO_CHOICES = [
+        ('mensal', 'Mensalidade'),
+        ('avulsa', 'Avulsa'),
+    ]
     
     cliente = models.ForeignKey(
         Cliente,
@@ -34,11 +39,18 @@ class Invoice(models.Model):
     mes_referencia = models.IntegerField(help_text="Mês (1-12)")
     ano_referencia = models.IntegerField(help_text="Ano (ex: 2025)")
     
+    tipo = models.CharField(
+        max_length=10, choices=TIPO_CHOICES, default='avulsa',
+        help_text='Mensalidade é gerada pelo sistema (1 por contrato/mês); avulsa é lançada à mão.'
+    )
+
     # Valores
     valor_total = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        validators=[MinValueValidator(Decimal('0.00'))]
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+        help_text='Soma dos contratos vinculados (calculado ao salvar).'
     )
     
     # Descrição do serviço cobrado
@@ -67,6 +79,10 @@ class Invoice(models.Model):
     # Controle temporal
     criado_em = models.DateTimeField(auto_now_add=True)
     pago_em = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def em_aberto(self):
+        return self.status in ('pendente', 'atrasado')
     
     class Meta:
         verbose_name = 'Invoice'

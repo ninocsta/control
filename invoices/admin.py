@@ -1,8 +1,17 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.db import transaction
 from django.forms import BaseInlineFormSet
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
 from .models import Invoice, InvoiceContrato, MessageQueue
+from .services.invoice_service import recalcular_total, registrar_pagamento
+from .services.message_queue_service import remover_mensagens_cobranca_pendentes
+
+
+def _enviar_confirmacao_apos_commit(mensagem):
+    if mensagem:
+        from .tasks import task_enviar_confirmacao_imediata
+        transaction.on_commit(lambda: task_enviar_confirmacao_imediata(mensagem.id), robust=True)
 
 
 class InvoiceContratoInlineFormSet(BaseInlineFormSet):
@@ -27,26 +36,29 @@ class InvoiceContratoInline(admin.TabularInline):
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
-        'get_invoice_number', 'cliente', 'contrato_vinculado', 'valor_total_display',
+        'get_invoice_number', 'cliente', 'tipo', 'contrato_vinculado', 'valor_total_display',
         'vencimento', 'status_badge', 'pago_em', 'order_nsu', 'invoice_slug'
     )
     list_filter = (
-        'status', 'ano_referencia', 'mes_referencia', 'cliente',
+        'status', 'tipo', 'ano_referencia', 'mes_referencia', 'cliente',
         'vencimento',
     )
     search_fields = (
         'cliente__nome', 'order_nsu', 'invoice_slug', 'transaction_nsu',
     )
     date_hierarchy = 'vencimento'
-    readonly_fields = ('criado_em', 'pago_em')
+    readonly_fields = ('criado_em', 'valor_total')
     inlines = (InvoiceContratoInline,)
+    actions = ('marcar_pago_manual', 'cancelar')
 
     fieldsets = (
         ('Cliente e Período', {
-            'fields': ('cliente', 'mes_referencia', 'ano_referencia', 'descricao')
+            'fields': ('cliente', 'tipo', 'mes_referencia', 'ano_referencia', 'descricao')
         }),
         ('Valores e Status', {
-            'fields': ('valor_total', 'vencimento', 'status')
+            'description': 'Valor = soma dos contratos abaixo. Marcar como pago aqui (Pix direto, '
+                           'dinheiro) envia a confirmação ao cliente.',
+            'fields': ('valor_total', 'vencimento', 'status', 'pago_em')
         }),
         ('Integração InfinitePay', {
             'fields': (
@@ -56,7 +68,7 @@ class InvoiceAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Controle', {
-            'fields': ('criado_em', 'pago_em'),
+            'fields': ('criado_em',),
             'classes': ('collapse',)
         }),
     )
@@ -79,6 +91,35 @@ class InvoiceAdmin(admin.ModelAdmin):
 
     def save_formset(self, request, form, formset, change):
         formset.save()
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        invoice = form.instance
+        if recalcular_total(invoice) and invoice.em_aberto:
+            self.message_user(request, 'Valor mudou: link de pagamento refeito.', messages.INFO)
+        status_antes = form.initial.get('status')
+        if invoice.status == 'pago' and status_antes != 'pago':
+            _enviar_confirmacao_apos_commit(registrar_pagamento(invoice, capture_method=invoice.capture_method or 'manual'))
+        elif invoice.status == 'cancelado' and status_antes != 'cancelado':
+            remover_mensagens_cobranca_pendentes(invoice)
+
+    @admin.action(description='Marcar como pago (Pix direto/dinheiro) e avisar o cliente')
+    def marcar_pago_manual(self, request, queryset):
+        total = 0
+        for invoice in queryset.exclude(status__in=['pago', 'cancelado']):
+            _enviar_confirmacao_apos_commit(registrar_pagamento(invoice, capture_method='manual'))
+            total += 1
+        self.message_user(request, f'{total} fatura(s) marcada(s) como paga(s).')
+
+    @admin.action(description='Cancelar (o link /p/ passa a mostrar "cancelada")')
+    def cancelar(self, request, queryset):
+        total = 0
+        for invoice in queryset.exclude(status__in=['pago', 'cancelado']):
+            invoice.status = 'cancelado'
+            invoice.save(update_fields=['status'])
+            remover_mensagens_cobranca_pendentes(invoice)
+            total += 1
+        self.message_user(request, f'{total} fatura(s) cancelada(s).')
 
     def status_badge(self, obj):
         colors = {

@@ -105,7 +105,7 @@ class ContratoSnapshot(models.Model):
     receita = models.DecimalField(
         max_digits=10, 
         decimal_places=2,
-        help_text="Receita REAL do período (soma de invoices pagos)"
+        help_text="Receita faturada no período (competência): faturas do mês, exceto canceladas"
     )
 
     custo_dominios = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))

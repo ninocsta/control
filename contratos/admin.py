@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Contrato
+from .models import Contrato, ContratoReajuste
 from infra.financeiro.models import ContratoSnapshot
 from decimal import Decimal
 
@@ -18,20 +18,29 @@ class ContratoSnapshotInline(admin.TabularInline):
         return False
 
 
+class ContratoReajusteInline(admin.TabularInline):
+    model = ContratoReajuste
+    extra = 0
+    fields = ('vigente_desde', 'valor_mensal', 'observacao')
+    verbose_name_plural = 'Reajustes programados (o valor muda a partir do mês informado)'
+
+
 @admin.register(Contrato)
 class ContratoAdmin(admin.ModelAdmin):
     list_display = (
-        'nome', 'cliente', 'valor_mensal', 'data_inicio', 
+        'nome', 'cliente', 'valor_mensal', 'valor_atual', 'data_inicio', 
         'data_fim', 'is_ativo', 'custo_medio'
     )
     list_filter = ('data_inicio', 'data_fim', 'cliente')
     search_fields = ('nome', 'cliente__nome', 'descricao')
     readonly_fields = ('custo_medio', 'margem_media', 'total_snapshots')
-    inlines = [ContratoSnapshotInline]
+    inlines = [ContratoReajusteInline, ContratoSnapshotInline]
     
     fieldsets = (
         ('Informações do Contrato', {
-            'fields': ('cliente', 'nome', 'descricao', 'valor_mensal')
+            'fields': ('cliente', 'nome', 'descricao', 'valor_mensal'),
+            'description': 'Cobrança começa no mês seguinte ao início, a menos que comece no dia 1. '
+                           'Mudança de valor futura: use "Reajustes programados".'
         }),
         ('Período de Vigência', {
             'fields': ('data_inicio', 'data_fim')
@@ -46,6 +55,11 @@ class ContratoAdmin(admin.ModelAdmin):
         }),
     )
     
+    def valor_atual(self, obj):
+        from django.utils import timezone
+        return f"R$ {obj.valor_em(timezone.localdate()):,.2f}"
+    valor_atual.short_description = 'Valor vigente'
+
     def is_ativo(self, obj):
         """Verifica se o contrato está ativo."""
         from datetime import date
@@ -73,6 +87,9 @@ class ContratoAdmin(admin.ModelAdmin):
         if not snapshots:
             return "Sem dados"
         
+        snapshots = [s for s in snapshots if s.margem_percentual is not None]
+        if not snapshots:
+            return "Sem dados"
         margem_total = sum(s.margem_percentual for s in snapshots)
         media = margem_total / len(snapshots)
         return f"{media:.1f}%"

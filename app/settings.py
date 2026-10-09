@@ -133,17 +133,7 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Email Configuration
-EMAIL_HOST = env('EMAIL_HOST')
-EMAIL_PORT = env.int('EMAIL_PORT')
-EMAIL_HOST_USER = env('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
-EMAIL_USE_TLS = True
-EMAIL_USE_SSL = False
-DEFAULT_FROM_EMAIL = env('EMAIL_HOST_USER')
-
-# Alertas de Vencimento
-ALERT_EMAIL_RECIPIENT = env('ALERT_EMAIL_RECIPIENT')
+# Avisos (vencimentos, atrasos, erros) vão pelo Telegram: app/notify.py
 
 LOGOUT_REDIRECT_URL = '/'
 LOGIN_URL = '/login/'

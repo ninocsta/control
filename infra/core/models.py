@@ -29,9 +29,24 @@ class InfraCostModel(models.Model):
     )    
     data_inicio = models.DateField()
     data_fim = models.DateField(null=True, blank=True)
-    vencimento = models.DateField()
+    vencimento = models.DateField(help_text='Próxima renovação. Use a ação "Renovar" para avançar o período.')
+    pago_pelo_cliente = models.BooleanField(
+        default=False,
+        help_text='O cliente paga direto ao fornecedor: só controla o vencimento, não entra em custo/margem.'
+    )
     ativo = models.BooleanField(default=True)
     criado_em = models.DateTimeField(auto_now_add=True)
+
+    def ativo_em(self, primeiro_dia, ultimo_dia):
+        """Mesmo critério do fechamento: começou antes do fim do mês e não terminou antes do início."""
+        return self.data_inicio < ultimo_dia and (self.data_fim is None or self.data_fim >= primeiro_dia)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        from infra.financeiro.services.rateio import validar_alteracao_custo
+        if self.data_fim and self.data_fim < self.data_inicio:
+            raise ValidationError({'data_fim': 'Data de fim não pode ser anterior à data de início.'})
+        validar_alteracao_custo(self)
 
     @property
     def custo_mensal(self):

@@ -22,7 +22,7 @@ from infra.hosting.models import HostingCost
 from infra.vps.models import VPSCost
 from infra.backups.models import VPSBackupCost
 from infra.emails.models import DomainEmailCost
-from .rateio import calcular_custo_mensal, ratear_por_contratos, validar_periodo
+from .rateio import calcular_custo_mensal, ratear_por_contratos, validar_periodo, primeiro_e_proximo_mes
 
 
 def fechar_periodo(periodo_id: int, usuario: str) -> dict:
@@ -45,11 +45,7 @@ def fechar_periodo(periodo_id: int, usuario: str) -> dict:
         validar_periodo(periodo)
         
         # 2. Calcular datas do período
-        primeiro_dia = date(periodo.ano, periodo.mes, 1)
-        if periodo.mes == 12:
-            ultimo_dia = date(periodo.ano + 1, 1, 1)
-        else:
-            ultimo_dia = date(periodo.ano, periodo.mes + 1, 1)
+        primeiro_dia, ultimo_dia = primeiro_e_proximo_mes(periodo.mes, periodo.ano)
         
         # 3. Buscar contratos ativos no período
         contratos_ativos = Contrato.objects.filter(
@@ -118,6 +114,7 @@ def _coletar_custos_periodo(primeiro_dia: date, ultimo_dia: date) -> dict:
     filtro_periodo = {
         'data_inicio__lt': ultimo_dia,
         'ativo': True,
+        'pago_pelo_cliente': False,  # cliente paga direto: só controle de vencimento
     }
     
     # Custos que não têm data_fim OU têm data_fim >= primeiro_dia
@@ -200,7 +197,7 @@ def _calcular_rateios(contratos, custos_por_tipo, primeiro_dia, ultimo_dia) -> d
         contrato__in=contratos_list,
         invoice__mes_referencia=mes_ref,
         invoice__ano_referencia=ano_ref
-    ).select_related('invoice', 'contrato')
+    ).exclude(invoice__status='cancelado').select_related('invoice', 'contrato')
     
     itens_por_contrato = defaultdict(list)
     for item in itens:

@@ -18,11 +18,17 @@ Objetivo principal:
 - PeriodoFinanceiro / ContratoSnapshot: controle e fechamento financeiro por contrato.
 
 ## Regras de faturamento
-- 1 invoice por cliente por mes.
-- Soma de todos os contratos ativos no mes.
+- Mensalidade (`Invoice.tipo='mensal'`): 1 fatura por cliente agrupando os contratos do mes.
+- Contrato entra no mes se comecou ate o dia 1 (inicio no meio do mes: cobra a partir do seguinte).
+- Cliente inativo nao e cobrado.
+- Valor do contrato no mes = ultimo `ContratoReajuste` vigente, senao `valor_mensal` (escalonamento/reajuste).
 - Vencimento baseado em `cliente.vencimento_padrao` (limite 1-28).
-- Idempotente: nao cria invoice duplicado para cliente/mes quando ja existe invoice com vinculos.
-- Invoices manuais sem vinculo nao bloqueiam a geracao automatica.
+- Idempotente por contrato: o job roda todo dia e so fatura contrato ainda sem mensalidade no mes
+  (cancelada conta como faturada, para nao voltar).
+- Fatura avulsa (`tipo='avulsa'`, criada no admin) nao bloqueia a mensalidade.
+- No admin o valor da fatura e a soma dos contratos vinculados; se mudar com a fatura em aberto, o checkout e refeito.
+- Pagamento manual: status "Pago" no admin (ou acao "Marcar como pago") preenche `pago_em`, limpa cobrancas e envia confirmacao.
+- Link curto `/p/<ref>/`: fatura paga leva ao recibo, cancelada mostra aviso (link antigo nao cobra mais).
 
 ## Integracao InfinitePay
 - Service: `invoices/services/infinitepay_service.py`.
@@ -39,6 +45,9 @@ Objetivo principal:
 ## Webhook InfinitePay
 - URL: `/webhooks/infinitepay/`
 - Busca invoice por `invoice_slug` ou `order_nsu`.
+- O webhook nao e assinado. Da baixa direto (como sempre) e depois confere na API
+  (`payment_check`, `INFINITEPAY_PAYMENT_CHECK_URL` opcional): se a InfinitePay nao confirmar,
+  nao responder ou o valor vier menor, avisa no Telegram. Nao bloqueia a baixa.
 - Marca como pago e salva `transaction_nsu`, `receipt_url`, `capture_method`.
 - Agenda mensagem de confirmacao na fila.
 - Responde rapido (logica leve).
@@ -62,7 +71,7 @@ Timezone): deixar `America/Sao_Paulo`, senão converter os horários para UTC (+
 | Nome | Comando | Cron (America/Sao_Paulo) |
 |---|---|---|
 | gerar-periodo-mes-atual | `python manage.py run_job gerar_periodo_mes_atual` | `5 0 1 * *` |
-| gerar-invoices-mes-atual | `python manage.py run_job gerar_invoices_mes_atual` | `10 0 1 * *` |
+| gerar-invoices-mes-atual | `python manage.py run_job gerar_invoices_mes_atual` | `10 0 * * *` (diario) |
 | fechar-periodo-mes-anterior | `python manage.py run_job fechar_periodo_mes_anterior` | `0 2 1 * *` |
 | gerar-checkouts-infinitepay | `python manage.py run_job processar_checkouts_infinitepay` | `40 7,15 * * *` |
 | alertar-vencimentos | `python manage.py run_job alertar_vencimentos` | `0 8 * * *` |
@@ -75,8 +84,20 @@ A confirmação de pagamento (`task_enviar_confirmacao_imediata`) sai na própri
 requisição do webhook da InfinitePay, depois do commit; se o WAHA falhar, a
 mensagem fica `pendente` e o `processar_fila_waha` reenvia.
 
+## Fila de mensagens: regras de envio
+- Ate 10 por execucao, confirmacoes primeiro. Texto montado na hora do envio.
+- Lembrete de 5/2 dias que perdeu a hora (fatura ja vencida) e descartado.
+- Atraso: a cada 3 dias ate 30 dias; depois so voce acompanha. Fatura que vence vira aviso no Telegram.
+
+## Datas monitoradas (resumo diario no Telegram, `alertar_vencimentos`)
+- Infra: 30/15/7/3/1/0 dias antes; vencido e nao renovado, a cada 3 dias.
+  Renovou? acao "Renovar" no admin do custo avanca o vencimento em `periodo_meses`.
+- `pago_pelo_cliente`: custo que o cliente paga direto; so controla vencimento, fora de custo/margem.
+- Contratos terminando e reajustes entrando em vigor: 30/7/0 dias.
+
 ## Fechamento financeiro por contrato
-- Receita por contrato vem de `InvoiceContrato`.
+- Receita por contrato vem de `InvoiceContrato` (competencia; faturas canceladas ficam fora).
+- Custo usado em periodo fechado nao muda valor; para trocar, encerrar (`data_fim`) e criar outro.
 - Custos sao rateados no fechamento (infra/financeiro/services).
 - Gera `ContratoSnapshot` com receita, custo e margem por contrato.
 

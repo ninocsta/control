@@ -20,6 +20,10 @@ class InfinitePayService:
         self.webhook_url = webhook_url or os.getenv('INFINITEPAY_WEBHOOK_URL', '')
         self.redirect_url = redirect_url or os.getenv('INFINITEPAY_REDIRECT_URL', '')
         self.description = description or os.getenv('INFINITEPAY_ITEM_DESCRIPTION') or 'Mensalidade de serviços contratados'
+        self.payment_check_url = (
+            os.getenv('INFINITEPAY_PAYMENT_CHECK_URL')
+            or 'https://api.infinitepay.io/invoices/public/checkout/payment_check'
+        )
         self.timeout = timeout
 
     def _build_headers(self):
@@ -98,6 +102,21 @@ class InfinitePayService:
 
         invoice.save(update_fields=updated_fields)
         return response
+
+    def verificar_pagamento(self, order_nsu, transaction_nsu, slug):
+        """
+        Confirma na InfinitePay que o pagamento existe (o webhook não é assinado, então
+        o corpo dele não é confiável). Retorna o JSON da API; `paid` True = pago.
+        """
+        if not self.handle:
+            raise ValueError('InfinitePay nao configurado (handle)')
+        payload = {
+            'handle': self.handle,
+            'order_nsu': str(order_nsu),
+            'transaction_nsu': transaction_nsu,
+            'slug': slug,
+        }
+        return post_json(self.payment_check_url, payload, headers=self._build_headers(), timeout=self.timeout)
 
     def try_create_checkout(self, invoice):
         try:

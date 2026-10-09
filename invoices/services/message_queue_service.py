@@ -4,6 +4,8 @@ from django.utils import timezone
 from invoices.models import MessageQueue
 
 TIPOS_COBRANCA = ('5_dias', '2_dias', 'no_dia', 'atraso')
+ATRASO_INTERVALO_DIAS = 3
+ATRASO_MAX_DIAS = 30  # depois disso para de cobrar o cliente: é com você (aviso no Telegram)
 
 
 def _format_valor(valor):
@@ -253,7 +255,7 @@ def agendar_mensagens_atraso(invoices, hoje=None):
         if dias_atraso <= 0:
             skipped += 1
             continue
-        if dias_atraso % 3 != 0:
+        if dias_atraso % ATRASO_INTERVALO_DIAS != 0 or dias_atraso > ATRASO_MAX_DIAS:
             skipped += 1
             continue
 

@@ -29,7 +29,7 @@ class DashboardService:
     """
     
     def __init__(self):
-        self.hoje = date.today()
+        self.hoje = timezone.localdate()
         self.primeiro_dia_mes_atual = date(self.hoje.year, self.hoje.month, 1)
     
     # ========================================
@@ -156,7 +156,7 @@ class DashboardService:
         ).filter(
             Q(data_fim__isnull=True) | Q(data_fim__gte=self.primeiro_dia_mes_atual)
         )
-        receita_contratos = sum(c.valor_mensal for c in contratos_ativos)
+        receita_contratos = sum(c.valor_em(self.primeiro_dia_mes_atual) for c in contratos_ativos)
         
         # Custos ativos (soma de todas as categorias)
         despesa = Decimal('0.00')
@@ -192,7 +192,8 @@ class DashboardService:
         """Soma custo mensal de um tipo de custo ativo."""
         custos = model_class.objects.filter(
             data_inicio__lte=self.primeiro_dia_mes_atual,
-            ativo=True
+            ativo=True,
+            pago_pelo_cliente=False,
         ).filter(
             Q(data_fim__isnull=True) | Q(data_fim__gte=self.primeiro_dia_mes_atual)
         )

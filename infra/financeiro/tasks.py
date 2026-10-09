@@ -4,17 +4,17 @@ Jobs do módulo financeiro. Rodam por `manage.py run_job` (Scheduled Task do Coo
 Tasks:
 - Gerar período do mês atual
 - Fechar período do mês anterior
-- Alertar vencimentos de infraestrutura
+- Resumo diário de datas (infra, contratos, reajustes) no Telegram
 """
 from datetime import date, timedelta
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.core.mail import send_mail
+from django.db import models
 
 from app.notify import notify
-from django.conf import settings
 import logging
 
+from contratos.models import Contrato, ContratoReajuste
 from infra.financeiro.models import PeriodoFinanceiro
 from infra.financeiro.services import fechar_periodo
 from infra.dominios.models import DomainCost
@@ -33,7 +33,7 @@ def task_gerar_periodo_mes_atual():
     Idempotente: não gera duplicatas.
     Executar: Todo dia 1 do mês.
     """
-    hoje = date.today()
+    hoje = timezone.localdate()
     mes = hoje.month
     ano = hoje.year
     
@@ -61,7 +61,7 @@ def task_fechar_periodo_mes_anterior():
     Idempotente: não recalcula períodos já fechados.
     Executar: Dia 1 de cada mês às 02:00.
     """
-    hoje = date.today()
+    hoje = timezone.localdate()
     
     # Calcular mês anterior
     primeiro_dia_mes_atual = date(hoje.year, hoje.month, 1)
@@ -95,305 +95,78 @@ def task_fechar_periodo_mes_anterior():
         return {'status': 'error', 'message': str(e)}
 
 
+DIAS_AVISO = (30, 15, 7, 3, 1, 0)
+INTERVALO_AVISO_VENCIDO = 3  # vencido e não renovado: repete a cada N dias
+
+
+def _custos_monitorados():
+    """(rótulo, queryset, nome) de cada tipo de custo de infra."""
+    return [
+        ('Domínio', DomainCost.objects.select_related('domain'), lambda c: c.domain.nome),
+        ('VPS', VPSCost.objects.select_related('vps'), lambda c: c.vps.nome),
+        ('Hosting', HostingCost.objects.select_related('hosting'), lambda c: c.hosting.nome),
+        ('E-mail', DomainEmailCost.objects.select_related('email__dominio', 'email__contrato__cliente'),
+         lambda c: f"{c.email.dominio.nome} ({c.email.contrato.cliente.nome})"),
+        ('Backup', VPSBackupCost.objects.select_related('backup__vps'),
+         lambda c: f"{c.backup.nome} ({c.backup.vps.nome})"),
+    ]
+
+
+def _deve_avisar(dias):
+    return dias in DIAS_AVISO or (dias < 0 and -dias % INTERVALO_AVISO_VENCIDO == 0)
+
+
+def _quando(dias):
+    if dias == 0:
+        return 'HOJE'
+    if dias < 0:
+        return f'vencido há {-dias}d'
+    return f'em {dias}d'
+
+
 def task_alertar_vencimentos():
     """
-    Envia alertas para custos de infraestrutura que vencem em breve.
-    
-    Regras:
-    - Alerta 30 dias antes do vencimento
-    - Alerta 7 dias antes do vencimento
-    - Alerta no dia do vencimento
-    
+    Resumo diário no Telegram de tudo que tem data e não pode passar:
+    - Renovação de infra (30/15/7/3/1/0 dias antes; vencido: a cada 3 dias até renovar/desativar)
+    - Contratos terminando e reajustes entrando em vigor (30/7/0 dias)
+
+    Renovou? Ação "Renovar" no admin do custo avança o vencimento.
     Executar: Diariamente às 08:00.
     """
-    hoje = date.today()
-    datas_alerta = [
-        hoje + timedelta(days=30),
-        hoje + timedelta(days=7),
-        hoje
-    ]
-    
+    hoje = timezone.localdate()
     alertas = []
-    
-    # Domínios
-    for data_alerta in datas_alerta:
-        dominios_vencendo = DomainCost.objects.filter(
-            vencimento=data_alerta,
-            ativo=True
-        ).select_related('domain')
-        
-        for cost in dominios_vencendo:
+
+    for tipo, qs, nome in _custos_monitorados():
+        custos = qs.filter(ativo=True).filter(
+            models.Q(data_fim__isnull=True) | models.Q(data_fim__gte=hoje)
+        ).filter(vencimento__lte=hoje + timedelta(days=max(DIAS_AVISO)))
+        for cost in custos:
             dias = (cost.vencimento - hoje).days
-            alertas.append({
-                'tipo': 'Domínio',
-                'nome': cost.domain.nome,
-                'fornecedor': cost.domain.fornecedor,
-                'vencimento': cost.vencimento.isoformat(),
-                'dias_restantes': dias,
-                'valor': float(cost.valor_total)
-            })
-    
-    # VPS
-    for data_alerta in datas_alerta:
-        vps_vencendo = VPSCost.objects.filter(
-            vencimento=data_alerta,
-            ativo=True
-        ).select_related('vps')
-        
-        for cost in vps_vencendo:
-            dias = (cost.vencimento - hoje).days
-            alertas.append({
-                'tipo': 'VPS',
-                'nome': cost.vps.nome,
-                'fornecedor': cost.vps.fornecedor,
-                'vencimento': cost.vencimento.isoformat(),
-                'dias_restantes': dias,
-                'valor': float(cost.valor_total)
-            })
-    
-    # Emails
-    for data_alerta in datas_alerta:
-        emails_vencendo = DomainEmailCost.objects.filter(
-            vencimento=data_alerta,
-            ativo=True
-        ).select_related('email__dominio', 'email__contrato__cliente')
-        
-        for cost in emails_vencendo:
-            dias = (cost.vencimento - hoje).days
-            alertas.append({
-                'tipo': 'Email',
-                'nome': f"{cost.email.dominio.nome}",
-                'fornecedor': cost.email.fornecedor,
-                'cliente': cost.email.contrato.cliente.nome,
-                'contrato': cost.email.contrato.nome,
-                'vencimento': cost.vencimento.isoformat(),
-                'dias_restantes': dias,
-                'valor': float(cost.valor_total)
-            })
-    
-    # Hosting
-    for data_alerta in datas_alerta:
-        hostings_vencendo = HostingCost.objects.filter(
-            vencimento=data_alerta,
-            ativo=True
-        ).select_related('hosting')
-        
-        for cost in hostings_vencendo:
-            dias = (cost.vencimento - hoje).days
-            alertas.append({
-                'tipo': 'Hosting',
-                'nome': cost.hosting.nome,
-                'fornecedor': cost.hosting.fornecedor,
-                'vencimento': cost.vencimento.isoformat(),
-                'dias_restantes': dias,
-                'valor': float(cost.valor_total)
-            })
-    
-    # Backups de VPS
-    for data_alerta in datas_alerta:
-        backups_vencendo = VPSBackupCost.objects.filter(
-            vencimento=data_alerta,
-            ativo=True
-        ).select_related('backup__vps')
-        
-        for cost in backups_vencendo:
-            dias = (cost.vencimento - hoje).days
-            alertas.append({
-                'tipo': 'Backup VPS',
-                'nome': f"{cost.backup.nome} ({cost.backup.vps.nome})",
-                'fornecedor': cost.backup.fornecedor or cost.backup.vps.fornecedor,
-                'vencimento': cost.vencimento.isoformat(),
-                'dias_restantes': dias,
-                'valor': float(cost.valor_total)
-            })
-    
+            if not _deve_avisar(dias):
+                continue
+            quem = ' · cliente paga' if cost.pago_pelo_cliente else f' · R$ {cost.valor_total:.2f}'
+            alertas.append((dias, f"{tipo} {nome}: {cost.vencimento:%d/%m} ({_quando(dias)}){quem}"))
+
+    for contrato in Contrato.objects.filter(
+        data_fim__gte=hoje, data_fim__lte=hoje + timedelta(days=30)
+    ).select_related('cliente'):
+        dias = (contrato.data_fim - hoje).days
+        if dias in (30, 7, 0):
+            alertas.append((dias, f"Contrato {contrato} termina {contrato.data_fim:%d/%m} ({_quando(dias)})"))
+
+    for reajuste in ContratoReajuste.objects.filter(
+        vigente_desde__gte=hoje, vigente_desde__lte=hoje + timedelta(days=30)
+    ).select_related('contrato__cliente'):
+        dias = (reajuste.vigente_desde - hoje).days
+        if dias in (30, 7, 0):
+            alertas.append((dias, f"Reajuste {reajuste.contrato}: R$ {reajuste.valor_mensal:.2f} "
+                                  f"a partir de {reajuste.vigente_desde:%d/%m} ({_quando(dias)})"))
+
     if alertas:
-        logger.warning(f"Encontrados {len(alertas)} vencimentos próximos")
-        total = sum(a['valor'] for a in alertas)
-        itens = "\n".join(f"- {a['tipo']} {a['nome']}: {a['vencimento']} ({a['dias_restantes']}d)" for a in alertas[:20])
-        notify(f"🔔 {len(alertas)} vencimento(s) próximo(s) - R$ {total:.2f}\n{itens}")
-        
-        # Enviar email com os alertas
-        try:
-            enviar_email_alertas(alertas, hoje)
-            logger.info(f"Email de alertas enviado com sucesso para {settings.ALERT_EMAIL_RECIPIENT}")
-        except Exception as e:
-            logger.error(f"Erro ao enviar email de alertas: {e}")
+        alertas.sort(key=lambda a: a[0])
+        linhas = "\n".join(f"- {texto}" for _, texto in alertas[:40])
+        notify(f"📅 {len(alertas)} data(s) para acompanhar:\n{linhas}")
     else:
         logger.info("Nenhum vencimento próximo encontrado")
-    
-    return {'total_alertas': len(alertas), 'alertas': alertas}
 
-
-def enviar_email_alertas(alertas, data_referencia):
-    """
-    Envia email formatado com os alertas de vencimento.
-    """
-    # Agrupar alertas por dias restantes
-    hoje = []
-    sete_dias = []
-    trinta_dias = []
-    
-    for alerta in alertas:
-        if alerta['dias_restantes'] == 0:
-            hoje.append(alerta)
-        elif alerta['dias_restantes'] == 7:
-            sete_dias.append(alerta)
-        elif alerta['dias_restantes'] == 30:
-            trinta_dias.append(alerta)
-    
-    # Construir corpo do email
-    corpo_html = f"""
-    <html>
-    <head>
-        <style>
-            body {{ font-family: Arial, sans-serif; }}
-            h2 {{ color: #333; }}
-            h3 {{ color: #666; }}
-            table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
-            th {{ background-color: #4CAF50; color: white; padding: 10px; text-align: left; }}
-            td {{ border: 1px solid #ddd; padding: 8px; }}
-            tr:nth-child(even) {{ background-color: #f2f2f2; }}
-            .urgente {{ background-color: #ffebee !important; }}
-            .atencao {{ background-color: #fff3e0 !important; }}
-            .info {{ background-color: #e3f2fd !important; }}
-        </style>
-    </head>
-    <body>
-        <h2>🔔 Alertas de Vencimento de Infraestrutura</h2>
-        <p><strong>Data:</strong> {data_referencia.strftime('%d/%m/%Y')}</p>
-        <p><strong>Total de Alertas:</strong> {len(alertas)}</p>
-        <hr>
-    """
-    
-    # Alertas de HOJE
-    if hoje:
-        corpo_html += f"""
-        <h3 style="color: #d32f2f;">🚨 VENCENDO HOJE ({len(hoje)})</h3>
-        <table>
-            <tr>
-                <th>Tipo</th>
-                <th>Nome</th>
-                <th>Fornecedor</th>
-                <th>Vencimento</th>
-                <th>Valor</th>
-            </tr>
-        """
-        for alerta in hoje:
-            corpo_html += f"""
-            <tr class="urgente">
-                <td>{alerta['tipo']}</td>
-                <td>{alerta['nome']}</td>
-                <td>{alerta.get('fornecedor', '-')}</td>
-                <td>{alerta['vencimento']}</td>
-                <td>R$ {alerta['valor']:.2f}</td>
-            </tr>
-            """
-        corpo_html += "</table>"
-    
-    # Alertas de 7 DIAS
-    if sete_dias:
-        corpo_html += f"""
-        <h3 style="color: #f57c00;">⚠️ VENCENDO EM 7 DIAS ({len(sete_dias)})</h3>
-        <table>
-            <tr>
-                <th>Tipo</th>
-                <th>Nome</th>
-                <th>Fornecedor</th>
-                <th>Vencimento</th>
-                <th>Valor</th>
-            </tr>
-        """
-        for alerta in sete_dias:
-            corpo_html += f"""
-            <tr class="atencao">
-                <td>{alerta['tipo']}</td>
-                <td>{alerta['nome']}</td>
-                <td>{alerta.get('fornecedor', '-')}</td>
-                <td>{alerta['vencimento']}</td>
-                <td>R$ {alerta['valor']:.2f}</td>
-            </tr>
-            """
-        corpo_html += "</table>"
-    
-    # Alertas de 30 DIAS
-    if trinta_dias:
-        corpo_html += f"""
-        <h3 style="color: #1976d2;">ℹ️ VENCENDO EM 30 DIAS ({len(trinta_dias)})</h3>
-        <table>
-            <tr>
-                <th>Tipo</th>
-                <th>Nome</th>
-                <th>Fornecedor</th>
-                <th>Vencimento</th>
-                <th>Valor</th>
-            </tr>
-        """
-        for alerta in trinta_dias:
-            corpo_html += f"""
-            <tr class="info">
-                <td>{alerta['tipo']}</td>
-                <td>{alerta['nome']}</td>
-                <td>{alerta.get('fornecedor', '-')}</td>
-                <td>{alerta['vencimento']}</td>
-                <td>R$ {alerta['valor']:.2f}</td>
-            </tr>
-            """
-        corpo_html += "</table>"
-    
-    # Resumo financeiro
-    total_hoje = sum(a['valor'] for a in hoje)
-    total_7dias = sum(a['valor'] for a in sete_dias)
-    total_30dias = sum(a['valor'] for a in trinta_dias)
-    total_geral = total_hoje + total_7dias + total_30dias
-    
-    corpo_html += f"""
-        <hr>
-        <h3>💰 Resumo Financeiro</h3>
-        <table>
-            <tr>
-                <th>Período</th>
-                <th>Quantidade</th>
-                <th>Valor Total</th>
-            </tr>
-            <tr class="urgente">
-                <td>Hoje</td>
-                <td>{len(hoje)}</td>
-                <td>R$ {total_hoje:.2f}</td>
-            </tr>
-            <tr class="atencao">
-                <td>7 dias</td>
-                <td>{len(sete_dias)}</td>
-                <td>R$ {total_7dias:.2f}</td>
-            </tr>
-            <tr class="info">
-                <td>30 dias</td>
-                <td>{len(trinta_dias)}</td>
-                <td>R$ {total_30dias:.2f}</td>
-            </tr>
-            <tr style="font-weight: bold;">
-                <td>TOTAL</td>
-                <td>{len(alertas)}</td>
-                <td>R$ {total_geral:.2f}</td>
-            </tr>
-        </table>
-        <hr>
-        <p style="color: #666; font-size: 12px;">
-            Este é um email automático do sistema de controle de infraestrutura.<br>
-            Para mais informações, acesse o painel administrativo.
-        </p>
-    </body>
-    </html>
-    """
-    
-    # Enviar email
-    assunto = f"🔔 Alertas de Vencimento - {len(alertas)} item(s) - {data_referencia.strftime('%d/%m/%Y')}"
-    
-    send_mail(
-        subject=assunto,
-        message="Este email requer visualização em HTML.",
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[settings.ALERT_EMAIL_RECIPIENT],
-        html_message=corpo_html,
-        fail_silently=False,
-    )
+    return {'total_alertas': len(alertas), 'alertas': [texto for _, texto in alertas]}

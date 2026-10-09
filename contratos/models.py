@@ -32,6 +32,11 @@ class Contrato(models.Model):
     def __str__(self):
         return f"{self.nome} - {self.cliente.nome}"
     
+    def valor_em(self, data):
+        """Valor mensal vigente em `data`: último reajuste com vigente_desde <= data, senão valor_mensal."""
+        reajuste = self.reajustes.filter(vigente_desde__lte=data).order_by('-vigente_desde').first()
+        return reajuste.valor_mensal if reajuste else self.valor_mensal
+
     def clean(self):
         # Validar data de fim
         if self.data_fim and self.data_fim < self.data_inicio:
@@ -42,3 +47,28 @@ class Contrato(models.Model):
             raise ValidationError(
                 'Contratos de clientes não-internos devem ter valor mensal maior que zero.'
             )
+
+
+class ContratoReajuste(models.Model):
+    """Mudança de valor programada (reajuste anual, escalonamento). Vale a partir do mês de `vigente_desde`."""
+    contrato = models.ForeignKey(Contrato, on_delete=models.CASCADE, related_name='reajustes')
+    vigente_desde = models.DateField(help_text='Primeiro dia do mês em que o novo valor passa a valer')
+    valor_mensal = models.DecimalField(
+        max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    observacao = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = 'Reajuste'
+        verbose_name_plural = 'Reajustes'
+        ordering = ['vigente_desde']
+        constraints = [
+            models.UniqueConstraint(fields=['contrato', 'vigente_desde'], name='unique_reajuste_contrato_data'),
+        ]
+
+    def __str__(self):
+        return f"{self.contrato} → R$ {self.valor_mensal} a partir de {self.vigente_desde:%m/%Y}"
+
+    def save(self, *args, **kwargs):
+        self.vigente_desde = self.vigente_desde.replace(day=1)
+        super().save(*args, **kwargs)

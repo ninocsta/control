@@ -1,4 +1,6 @@
 from django.contrib import admin
+
+from infra.core.admin import renovar
 from .models import DomainEmail, DomainEmailCost
 
 
@@ -7,7 +9,7 @@ class DomainEmailCostInline(admin.TabularInline):
     extra = 0
     fields = (
         'valor_total', 'periodo_meses', 'custo_mensal_calc',
-        'data_inicio', 'data_fim', 'vencimento', 'ativo'
+        'data_inicio', 'data_fim', 'vencimento', 'pago_pelo_cliente', 'ativo'
     )
     readonly_fields = ('custo_mensal_calc',)
     
@@ -51,9 +53,10 @@ class DomainEmailAdmin(admin.ModelAdmin):
 class DomainEmailCostAdmin(admin.ModelAdmin):
     list_display = (
         'email', 'valor_total', 'periodo_meses', 'custo_mensal',
-        'data_inicio', 'data_fim', 'vencimento', 'ativo'
+        'data_inicio', 'data_fim', 'vencimento', 'pago_pelo_cliente', 'ativo'
     )
-    list_filter = ('ativo', 'data_inicio', 'vencimento')
+    list_filter = ('ativo', 'pago_pelo_cliente', 'data_inicio', 'vencimento')
+    actions = [renovar]
     search_fields = ('email__dominio__nome',)
     
     fieldsets = (
@@ -67,6 +70,6 @@ class DomainEmailCostAdmin(admin.ModelAdmin):
             'fields': ('data_inicio', 'data_fim', 'vencimento')
         }),
         ('Status', {
-            'fields': ('ativo',)
+            'fields': ('pago_pelo_cliente', 'ativo',)
         }),
     )
