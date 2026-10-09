@@ -181,3 +181,15 @@ class InvoicesWahaQueueProcessingTests(TestCase):
         args, _ = send_message_mock.call_args
         self.assertEqual(args[0], self.cliente.telefone)
         self.assertIn('venceu em', args[1])
+
+
+class InfinitePayServiceConfigTests(TestCase):
+    @patch.dict('os.environ', {'INFINITEPAY_BASE_URL': '', 'INFINITEPAY_ITEM_DESCRIPTION': ''})
+    def test_env_vazia_usa_defaults(self):
+        # docker-compose passa ${VAR:-} como string vazia, não como ausente
+        from invoices.services.infinitepay_service import InfinitePayService
+
+        service = InfinitePayService()
+
+        self.assertEqual(service.base_url, 'https://api.checkout.infinitepay.io')
+        self.assertEqual(service.description, 'Mensalidade de serviços contratados')

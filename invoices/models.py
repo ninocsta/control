@@ -96,7 +96,7 @@ class Invoice(models.Model):
         return (
             self.descricao.strip()
             or getattr(self.cliente, 'descricao_cobranca', '').strip()
-            or os.getenv('INFINITEPAY_ITEM_DESCRIPTION', 'Mensalidade de serviços contratados')
+            or os.getenv('INFINITEPAY_ITEM_DESCRIPTION') or 'Mensalidade de serviços contratados'
         )
 
     def clean(self):

@@ -14,12 +14,12 @@ class InfinitePayService:
     """
 
     def __init__(self, base_url=None, api_key=None, handle=None, webhook_url=None, redirect_url=None, description=None, timeout=10):
-        self.base_url = (base_url or os.getenv('INFINITEPAY_BASE_URL', 'https://api.checkout.infinitepay.io')).rstrip('/')
+        self.base_url = (base_url or os.getenv('INFINITEPAY_BASE_URL') or 'https://api.checkout.infinitepay.io').rstrip('/')
         self.api_key = api_key or os.getenv('INFINITEPAY_API_KEY', '')
         self.handle = handle or os.getenv('INFINITEPAY_HANDLE', '')
         self.webhook_url = webhook_url or os.getenv('INFINITEPAY_WEBHOOK_URL', '')
         self.redirect_url = redirect_url or os.getenv('INFINITEPAY_REDIRECT_URL', '')
-        self.description = description or os.getenv('INFINITEPAY_ITEM_DESCRIPTION', 'Mensalidade de serviços contratados')
+        self.description = description or os.getenv('INFINITEPAY_ITEM_DESCRIPTION') or 'Mensalidade de serviços contratados'
         self.timeout = timeout
 
     def _build_headers(self):
