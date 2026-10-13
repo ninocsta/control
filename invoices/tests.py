@@ -216,6 +216,35 @@ class InvoicesWahaQueueProcessingTests(TestCase):
         self.assertEqual(args[0], self.cliente.telefone)
         self.assertIn('venceu em', args[1])
 
+    @patch('invoices.tasks.time.sleep')
+    @patch('invoices.tasks.WahaService.send_message', return_value={'status': 'ok'})
+    def test_task_espaca_envios(self, send_message_mock, sleep_mock):
+        for mes in (1, 2, 3):
+            invoice = Invoice.objects.create(
+                cliente=self.cliente,
+                mes_referencia=mes,
+                ano_referencia=2026,
+                valor_total=Decimal('100.00'),
+                vencimento=timezone.localdate(),
+                status='pendente',
+                checkout_url=f'https://pay.example.com/i/{mes}',
+            )
+            MessageQueue.objects.create(
+                invoice=invoice,
+                telefone=self.cliente.telefone,
+                mensagem='x',
+                tipo='no_dia',
+                agendado_para=timezone.now() - timedelta(minutes=5),
+                status='pendente',
+            )
+
+        resultado = task_processar_fila_waha(limite=10)
+
+        self.assertEqual(resultado['enviadas'], 3)
+        self.assertEqual(sleep_mock.call_count, 2)
+        for chamada in sleep_mock.call_args_list:
+            self.assertGreaterEqual(chamada.args[0], 30)
+
 
 class InfinitePayServiceConfigTests(TestCase):
     @patch.dict('os.environ', {'INFINITEPAY_BASE_URL': '', 'INFINITEPAY_ITEM_DESCRIPTION': ''})

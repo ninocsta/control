@@ -5,6 +5,8 @@ ou direto de uma view (confirmação de pagamento).
 from django.utils import timezone
 from django.db import models
 import logging
+import random
+import time
 
 from app.notify import notify
 from invoices.models import Invoice, MessageQueue
@@ -22,6 +24,9 @@ from invoices.services.message_queue_service import (
 )
 from invoices.services.waha_service import WahaService, ContactNotFoundError
 logger = logging.getLogger(__name__)
+
+# Pausa entre envios da fila (segundos): espalha as mensagens pro WhatsApp não bloquear o número.
+PAUSA_ENTRE_ENVIOS = (30, 90)
 
 
 def task_gerar_invoices_mes_atual():
@@ -210,6 +215,8 @@ def task_processar_fila_waha(limite=10):
     descartadas = 0
 
     for mensagem in mensagens:
+        if enviados:
+            time.sleep(random.uniform(*PAUSA_ENTRE_ENVIOS))
         try:
             if mensagem.tipo in TIPOS_COBRANCA:
                 if not mensagem.invoice.em_aberto:
