@@ -529,6 +529,30 @@
 {% block extra_js %}
 <script>
 (function () {
+    // Ações via POST recarregam a página: volta para a mesma altura em vez do topo.
+    const CHAVE_SCROLL = 'conferencia-scroll';
+    try {
+        const salvo = JSON.parse(sessionStorage.getItem(CHAVE_SCROLL) || 'null');
+        sessionStorage.removeItem(CHAVE_SCROLL);
+        if (salvo && salvo.path === window.location.pathname) {
+            window.scrollTo(0, salvo.y);
+        }
+    } catch (e) { /* sem storage: fica no topo */ }
+    window.salvarScrollConferencia = () => {
+        try {
+            sessionStorage.setItem(CHAVE_SCROLL, JSON.stringify({
+                path: window.location.pathname, y: window.scrollY,
+            }));
+        } catch (e) { /* ignora */ }
+    };
+    document.addEventListener('submit', (evento) => {
+        if (!evento.defaultPrevented && evento.target.method === 'post') {
+            window.salvarScrollConferencia();
+        }
+    });
+})();
+
+(function () {
     const csrf = document.querySelector('input[name=csrfmiddlewaretoken]');
     if (!csrf) return;
 
@@ -619,6 +643,7 @@
                 formVinculo.appendChild(campo);
             });
         });
+        window.salvarScrollConferencia();
         formVinculo.submit();
     });
 
