@@ -244,7 +244,7 @@
 {% endif %}
 
 {% for item in dias %}
-<details class="card card-soft mb-2 conf-dia {% if item.tudo_conferido %}is-ok{% elif item.diferenca or item.sem_par_extrato %}is-alerta{% endif %}"
+<details id="conf-dia-{{ item.dia }}" class="card card-soft mb-2 conf-dia {% if item.tudo_conferido %}is-ok{% elif item.diferenca or item.sem_par_extrato %}is-alerta{% endif %}"
          {% if dia_filtro or item.pendentes %}open{% endif %}>
     <summary class="card-body py-3 conf-dia-head">
         <span class="conf-dia-data">{{ item.data|date:'d/m' }} <span class="text-muted fw-normal">{{ item.data|date:'D' }}</span></span>
@@ -529,25 +529,36 @@
 {% block extra_js %}
 <script>
 (function () {
-    // Ações via POST recarregam a página: volta para a mesma altura em vez do topo.
+    // Ações via POST recarregam a página: volta para o mesmo lugar em vez do
+    // topo. Ancora no card do dia, porque ele pode fechar (dia todo conferido)
+    // e mudar a altura do que vem acima.
     const CHAVE_SCROLL = 'conferencia-scroll';
     try {
         const salvo = JSON.parse(sessionStorage.getItem(CHAVE_SCROLL) || 'null');
         sessionStorage.removeItem(CHAVE_SCROLL);
         if (salvo && salvo.path === window.location.pathname) {
-            window.scrollTo(0, salvo.y);
+            const ancora = salvo.dia && document.getElementById(salvo.dia);
+            if (ancora) {
+                window.scrollTo(0, ancora.getBoundingClientRect().top + window.scrollY - salvo.offset);
+            } else {
+                window.scrollTo(0, salvo.y);
+            }
         }
     } catch (e) { /* sem storage: fica no topo */ }
-    window.salvarScrollConferencia = () => {
+    window.salvarScrollConferencia = (origem) => {
+        const dia = origem && origem.closest('.conf-dia');
         try {
             sessionStorage.setItem(CHAVE_SCROLL, JSON.stringify({
-                path: window.location.pathname, y: window.scrollY,
+                path: window.location.pathname,
+                y: window.scrollY,
+                dia: dia ? dia.id : null,
+                offset: dia ? dia.getBoundingClientRect().top : 0,
             }));
         } catch (e) { /* ignora */ }
     };
     document.addEventListener('submit', (evento) => {
         if (!evento.defaultPrevented && evento.target.method === 'post') {
-            window.salvarScrollConferencia();
+            window.salvarScrollConferencia(evento.target);
         }
     });
 })();
@@ -643,7 +654,7 @@
                 formVinculo.appendChild(campo);
             });
         });
-        window.salvarScrollConferencia();
+        window.salvarScrollConferencia(document.querySelector('.js-selecao:checked'));
         formVinculo.submit();
     });
 
